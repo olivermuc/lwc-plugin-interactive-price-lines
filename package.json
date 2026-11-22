@@ -1,0 +1,48 @@
+{
+	"name": "@tradingview/lwc-plugin-interactive-price-lines",
+	"version": "0.1.0",
+	"description": "Draggable, annotated price lines with host-owned editing and actions.",
+	"author": "TradingView",
+	"license": "Apache-2.0",
+	"type": "module",
+	"types": "./dist/interactive-price-lines.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/interactive-price-lines.d.ts",
+			"default": "./dist/interactive-price-lines.js"
+		},
+		"./standalone": {
+			"types": "./dist/interactive-price-lines.d.ts",
+			"default": "./dist/interactive-price-lines.standalone.js"
+		}
+	},
+	"files": ["dist"],
+	"scripts": {
+		"dev": "vite --config src/vite.config.js",
+		"build": "tsc && node compile.mjs",
+		"typecheck": "tsc --noEmit"
+	},
+	"peerDependencies": {
+		"lightweight-charts": "^5.0.0"
+	},
+	"dependencies": {
+		"fancy-canvas": "~2.1.0"
+	},
+	"devDependencies": {
+		"@tradingview/lwc-plugin-preview-kit": "workspace:*",
+		"@tradingview/lwc-toolkit": "workspace:*",
+		"dts-bundle-generator": "9.5.1",
+		"lightweight-charts": "workspace:*",
+		"typescript": "5.9.3",
+		"vite": "8.3.7"
+	},
+	"lwcPlugin": {
+		"title": "Interactive price lines",
+		"category": "series-primitive",
+		"lifecycle": "experimental",
+		"origin": "official",
+		"author": "TradingView",
+		"demo": "src/example/index.html",
+		"tags": ["price line", "interactive", "orders", "alerts"]
+	}
+}
