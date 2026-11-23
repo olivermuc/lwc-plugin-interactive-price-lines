@@ -15,15 +15,26 @@ const DEMO_COLORS = {
 	sell: token('--red'),
 	trailing: token('--orange'),
 	sellLimit: token('--accent'),
+	holding: token('--text-secondary'),
+};
+const FONT_COLOR = token('--text-primary');
+
+// Host responsibility: the holding label carries abs and % distance to the current price and must be re-sent on every tick.
+const CURRENT_PRICE = 100 + Math.sin(79 / 5) * 10;
+const holdingLabel = (price: number): string => {
+	const distance = CURRENT_PRICE - price;
+	const sign = distance >= 0 ? '+' : '−';
+	return `BE ${price.toFixed(2)}  ${sign}${Math.abs(distance).toFixed(2)} (${sign}${Math.abs(distance / price * 100).toFixed(2)}%)`;
 };
 
 export const DEMO_LINES: InteractivePriceLineOptions[] = [
-	{ id: 'alert', price: 102.5, color: DEMO_COLORS.alert, label: 'Alert', quantity: '', actions: ['cancel'], lineType: 'alert' },
-	{ id: 'buy-limit', price: 96.5, color: DEMO_COLORS.buy, label: 'Buy Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
-	{ id: 'buy-stop', price: 105, color: DEMO_COLORS.buy, label: 'Buy Stop', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
-	{ id: 'sell-stop-loss', price: 94, color: DEMO_COLORS.sell, label: 'Stop Loss', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
-	{ id: 'sell-trailing-stop', price: 91.5, color: DEMO_COLORS.trailing, label: 'Trailing Stop', quantity: '', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
-	{ id: 'sell-limit', price: 108, color: DEMO_COLORS.sellLimit, label: 'Sell Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
+	{ id: 'alert', price: 102.5, color: DEMO_COLORS.alert, fontColor: FONT_COLOR, label: 'Alert', quantity: '', actions: ['cancel'], lineType: 'alert' },
+	{ id: 'buy-limit', price: 96.5, color: DEMO_COLORS.buy, fontColor: FONT_COLOR, label: 'Buy Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
+	{ id: 'buy-stop', price: 105, color: DEMO_COLORS.buy, fontColor: FONT_COLOR, label: 'Buy Stop', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
+	{ id: 'sell-stop-loss', price: 94, color: DEMO_COLORS.sell, fontColor: FONT_COLOR, label: 'Stop Loss', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
+	{ id: 'sell-trailing-stop', price: 91.5, color: DEMO_COLORS.trailing, fontColor: FONT_COLOR, label: 'Trailing Stop', quantity: '', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
+	{ id: 'sell-limit', price: 108, color: DEMO_COLORS.sellLimit, fontColor: FONT_COLOR, label: 'Sell Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
+	{ id: 'holding', price: 97.8, color: DEMO_COLORS.holding, fontColor: FONT_COLOR, label: holdingLabel(97.8), lineType: 'holding' },
 ];
 
 const container = document.getElementById('chart') as HTMLElement;
@@ -78,7 +89,7 @@ lines.priceChanged().subscribe(({ line, previousPrice }) => console.log(`${line.
 
 // --- Host-owned context menu ---
 const menu = document.getElementById('menu') as HTMLElement;
-const colorCycle = Object.values(DEMO_COLORS);
+const colorCycle = Object.values(DEMO_COLORS).filter(color => color !== DEMO_COLORS.holding);
 let alertCounter = 0;
 
 function closeMenu(): void { menu.style.display = 'none'; menu.replaceChildren(); }
@@ -99,7 +110,7 @@ lines.contextMenuRequested().subscribe(({ price, line, clientX, clientY }) => {
 		menuItem('Remove', () => lines.removeLine(line.id));
 	} else if (price !== null) {
 		menuItem(`Add alert at ${price.toFixed(2)}`, () => lines.addLine({
-			id: `alert-${++alertCounter}`, price, lineType: 'alert', color: DEMO_COLORS.alert, label: 'Alert', actions: ['cancel'],
+			id: `alert-${++alertCounter}`, price, lineType: 'alert', color: DEMO_COLORS.alert, fontColor: FONT_COLOR, label: 'Alert', actions: ['cancel'],
 		}));
 	} else return;
 	menu.style.left = `${clientX}px`; menu.style.top = `${clientY}px`; menu.style.display = 'flex';
