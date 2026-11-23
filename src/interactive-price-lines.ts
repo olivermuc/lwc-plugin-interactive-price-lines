@@ -254,11 +254,11 @@ function layoutLine(line: InteractivePriceLine, y: number, paneWidth: number, m:
 	}
 
 	if (line.lineType === 'holding') {
-		// Owned | amount | abs gain | rel gain: label plus whichever extra values are present.
+		// `Owned: amount | abs gain | rel gain`: the amount shares the first segment with the label; absent / empty values are skipped.
 		const { holdingAmount, holdingAbsGain, holdingRelGain } = line.extraData;
-		const texts = [line.label, holdingAmount, holdingAbsGain, holdingRelGain]
-			.filter((value, index) => index === 0 || (value !== undefined && String(value) !== ''))
-			.map(value => String(value));
+		const present = (value: string | number | undefined): value is string | number => value !== undefined && String(value) !== '';
+		const texts = [present(holdingAmount) ? `${line.label}: ${holdingAmount}` : line.label]
+			.concat([holdingAbsGain, holdingRelGain].filter(present).map(String));
 		const widths = texts.map(text => segmentWidth(text, line.fontSize, MIN_LABEL_WIDTH, m));
 		const total = widths.reduce((sum, width) => sum + width, 0) + SEPARATOR_WIDTH * (texts.length - 1);
 		let cursor = Math.max(0, rightEdge - total);

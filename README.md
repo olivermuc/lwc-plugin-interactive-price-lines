@@ -9,8 +9,8 @@ This document is the current product and engineering handoff. **Read it fully
 before making the next change.** Together with the source zip it must always be
 enough to start a fresh chat and continue the work.
 
-- **Last released plugin version: v1.3** (see "Current implementation").
-- **Next target: v1.4**: the open items under "Open items" (tests, plus the points to confirm).
+- **Last released plugin version: v1.4** (see "Current implementation").
+- **Next target: v1.5**: the open items under "Open items" (tests, plus the points to confirm).
 
 ## GENERAL project notes (workflow rules, MUST follow)
 
@@ -44,7 +44,7 @@ version constant in the source.
   (v1.1 → `"version": "1.1.0"`).
 - Keep `Version-X.Y.txt` in sync on every drop: rename/replace it so the file
   name and its content match the new version (content: `vX.Y` plus the commit
-  message line). Done in v1.3 (`Version-1.3.txt`, `package.json` `1.3.0`).
+  message line). Done in v1.3 (`Version-1.4.txt`, `package.json` `1.4.0`).
 
 ## Repository and package
 
@@ -66,7 +66,7 @@ pnpm --filter @tradingview/lwc-plugin-interactive-price-lines dev --host 127.0.0
 Dependencies: peer `lightweight-charts ^5.0.0`, `fancy-canvas ~2.1.0`,
 workspace `@tradingview/lwc-toolkit` (`Delegate`, `PluginBase`).
 
-## Current implementation (v1.3)
+## Current implementation (v1.4)
 
 `InteractivePriceLines` is a series primitive attached with:
 
@@ -142,9 +142,10 @@ hit-testable.
   drag-only area (no edit request); the `✕` segment needs `'cancel'` in
   `actions`, otherwise the box is label only.
 - **Holding:** dotted line, no end dot, static box
-  `label | holdingAmount | holdingAbsGain | holdingRelGain` (label defaults to
-  `Owned`; values come from `extraData`; absent / empty values are skipped
-  together with their separator). Same 5rem right offset as orders. **Fully
+  `label: holdingAmount | holdingAbsGain | holdingRelGain`, e.g.
+  `Owned: 123 | +123,12 | +13,12 %` (label defaults to `Owned`; values come from
+  `extraData`; without an amount the first segment is just the label; absent /
+  empty gains are skipped together with their separator). Same 5rem right offset as orders. **Fully
   static:** skipped by hit testing, hover, drag, click and the context-menu
   `line` payload (right click reports `line: null`). The host formats the
   values and keeps them current with `updateLine(id, { extraData })`.
@@ -191,7 +192,7 @@ the **actual** demo code ran. Checked in v1.3: unconfirmed order shows `✕ ✓`
 without hover; confirmed order shows only `✕` and only on hover, hover survives
 the gaps; grip / box drag fires `priceChanged`; alert hover shows
 `Alert | ✕`, dragging it by the label works and clicking `✕` fires `cancel`;
-holding renders `Owned | 123 | +123,12 | +13,12 %`, is inert and a right click
+holding renders `Owned: 123 | +123,12 | +13,12 %`, is inert and a right click
 on it gives the "add alert" menu; `fontSize` / `fontColor` fallbacks from v1.2.
 **Not verified:** the real `lightweight-charts` pipeline and pixel match
 against images 1 and 2.
@@ -224,11 +225,11 @@ provide an accessible editable input by themselves.
 | Colours | **No token handling in the plugin.** Background, line/icon colour (`color`), text colour (`fontColor` → `color` → `#fff`) |
 | Info box margins | v1.2: every text has 8px left / right; empty segments get a minimum width. The order grip stays (user likes it) |
 | Alert style | v1.3: centred `label \| ✕` box (label default `Alert` set by host), no grip / quantity, hover only, no outside buttons. Trashcan dropped |
-| Holding | v1.3: static line, box `Owned \| amount \| abs gain \| rel gain` from `extraData`, host formats and updates the values |
+| Holding | v1.3: static line, box `Owned: amount \| abs gain \| rel gain` from `extraData` (v1.4: amount joined to the label with `: `), host formats and updates the values |
 | Context menu | Right click anywhere on the chart: `preventDefault()` + `contextMenuRequested` event to the host, which owns the menu |
 | Tests | Do not exist yet; create `tests/interactions` and `tests/graphics` from scratch (runner to be decided with the user) |
 
-## Checklist (v1.3)
+## Checklist (v1.4)
 
 Status legend: `[ ]` open, `[x]` done. Update this list every drop.
 
@@ -253,6 +254,7 @@ Status legend: `[ ]` open, `[x]` done. Update this list every drop.
 12. `holding` line type `[x]`
 13. Alert box `label | ✕` `[x]`
 14. `extraData` (`holdingAmount`, `holdingAbsGain`, `holdingRelGain`) `[x]`
+15. Holding format `Owned: amount | abs | rel` `[x]`
 
 ## Open items
 
@@ -264,7 +266,7 @@ Status legend: `[ ]` open, `[x]` done. Update this list every drop.
   2. *Holding is fully inert*: not hit-testable, not in the context-menu payload.
   3. *`extraData` values are drawn as passed* (no number formatting, no sign
      colouring); the `%` sign is part of the string the host sends.
-- Visual review of v1.3 in the real demo (`pnpm ... dev`): see "Verification so far" for what could not be checked in the sandbox.
+- Visual review of v1.4 in the real demo (`pnpm ... dev`): see "Verification so far" for what could not be checked in the sandbox.
 - Known limitation (unchanged from v1.0): pointer coordinates are relative to
   the chart container and assume the pane starts at x = 0 (no left price scale).
 - Hover-only buttons have no touch equivalent (no hover on touch); a tap on the

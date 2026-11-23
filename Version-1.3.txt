@@ -1,2 +1,0 @@
-v1.3
-v1.3: Revert hover-only for unconfirmed order buttons, restore order grip, alert box `label | ✕`, `extraData` with holding amount / abs gain / rel gain
