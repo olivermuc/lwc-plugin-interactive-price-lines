@@ -1,2 +1,0 @@
-v1.2
-v1.2: Per-line `fontColor` / `fontSize`, equal info box margins, hover-only order buttons, `holding` line type, single-icon alert box

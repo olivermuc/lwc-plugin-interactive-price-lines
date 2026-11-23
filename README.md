@@ -9,8 +9,8 @@ This document is the current product and engineering handoff. **Read it fully
 before making the next change.** Together with the source zip it must always be
 enough to start a fresh chat and continue the work.
 
-- **Last released plugin version: v1.2** (see "Current implementation").
-- **Next target: v1.3**: the open items under "Open items" (tests, plus the points to confirm).
+- **Last released plugin version: v1.3** (see "Current implementation").
+- **Next target: v1.4**: the open items under "Open items" (tests, plus the points to confirm).
 
 ## GENERAL project notes (workflow rules, MUST follow)
 
@@ -44,7 +44,7 @@ version constant in the source.
   (v1.1 → `"version": "1.1.0"`).
 - Keep `Version-X.Y.txt` in sync on every drop: rename/replace it so the file
   name and its content match the new version (content: `vX.Y` plus the commit
-  message line). Done in v1.2 (`Version-1.2.txt`, `package.json` `1.2.0`).
+  message line). Done in v1.3 (`Version-1.3.txt`, `package.json` `1.3.0`).
 
 ## Repository and package
 
@@ -66,7 +66,7 @@ pnpm --filter @tradingview/lwc-plugin-interactive-price-lines dev --host 127.0.0
 Dependencies: peer `lightweight-charts ^5.0.0`, `fancy-canvas ~2.1.0`,
 workspace `@tradingview/lwc-toolkit` (`Delegate`, `PluginBase`).
 
-## Current implementation (v1.2)
+## Current implementation (v1.3)
 
 `InteractivePriceLines` is a series primitive attached with:
 
@@ -75,7 +75,6 @@ const lines = new InteractivePriceLines(chartContainer, {
   backgroundColor: '#020305',   // optional; else chart layout.background (solid), else #020305
   fontFamily: '...',            // optional; default system stack
   borderRadius: 6,              // optional, CSS px
-  alertIcon: '🗑',              // optional glyph of the alert box; '✕' is the plain alternative
 });
 series.attachPrimitive(lines);
 ```
@@ -93,7 +92,7 @@ Public methods:
   (so controls can mask it and it is never doubled). Throws on duplicate id or
   if not attached.
 - `updateLine(id, patch)` patches `price`, `color`, `fontColor`, `fontSize`,
-  `quantity`, `label`, `actions`, `confirmed`. `lineType` is immutable (not in the patch type; a
+  `quantity`, `label`, `actions`, `confirmed`, `extraData` (replaced as a whole). `lineType` is immutable (not in the patch type; a
   runtime `lineType` key throws). Throws on unknown id.
 - `removeLine(id)`, `lines()`.
 - `editRequested()`, `actionClicked()`, `priceChanged()`,
@@ -109,11 +108,12 @@ lines.contextMenuRequested().subscribe(({ price, line, clientX, clientY }) => { 
 Types: `InteractivePriceLineAction = 'cancel' | 'confirm'`,
 `InteractivePriceLineField = 'quantity' | 'label'`,
 `InteractivePriceLineType = 'alert' | 'order' | 'holding'`,
-`InteractivePriceLineOptions { id, price, lineType?='order', color?, fontColor?, fontSize?=12, quantity?, label?, actions?, confirmed?=false }`,
-`InteractivePriceLinesOptions { backgroundColor?, fontFamily?, borderRadius?, alertIcon? }`.
+`InteractivePriceLineOptions { id, price, lineType?='order', color?, fontColor?, fontSize?=12, quantity?, label?, actions?, confirmed?=false, extraData? }`,
+`InteractivePriceLineExtraData { holdingAmount?, holdingAbsGain?, holdingRelGain? }` (`string | number`, drawn as passed),
+`InteractivePriceLinesOptions { backgroundColor?, fontFamily?, borderRadius? }`.
 The returned `InteractivePriceLine` carries the **resolved** `fontColor` and `fontSize`.
 
-### Rendering / geometry (v1.2)
+### Rendering / geometry (v1.3)
 
 `layoutLine()` is the single geometry source for drawing and hit testing (CSS
 px, pane coordinates). Hidden controls have no rect: not painted, not
@@ -121,55 +121,51 @@ hit-testable.
 
 - **Colours (DECIDED):** background (option, else chart solid background, else
   `#020305`); line colour (`color`, default `#F23645`) for line, borders,
-  separator and the `✕` / `✓` icons; **text colour** (quantity / label) =
-  `fontColor`, else `color` **if one was passed**, else `TEXT_COLOR` (`#fff`).
-  The fallback is live: `updateLine({ color })` also recolours text that has no
-  explicit `fontColor`. Colours are opaque strings.
+  separators, grip dots and the `✕` / `✓` icons; **text colour** = `fontColor`,
+  else `color` **if one was passed**, else `TEXT_COLOR` (`#fff`). The fallback
+  is live: `updateLine({ color })` also recolours text without explicit
+  `fontColor`.
 - **Font size:** `fontSize` per line (CSS px, default 12, must be > 0 or
   `addLine` / `updateLine` throw). Row height scales proportionally
-  (`round(fontSize * 22 / 12)`, i.e. 22 at 12); disks are `rowHeight` wide.
-  Paddings and gaps stay constant.
-- **Info box margins (DECIDED v1.2):** `border | quantity | separator | label |
-  border`. Every left / right margin (border to text, text to separator) is
-  `TEXT_PADDING` = 8px; segment width = measured text + 2 × padding. Only an
-  *empty* segment gets a minimum width (quantity 28, label 22). The old grip
-  column is removed: the whole box is the drag area.
-- **Order** (default): dash-dot line + small end dot; right edge of the info
-  box is **5rem** from the pane's right edge (rem resolved from the root font
-  size). Left to right: `[ ✕ disk ][ ✓ disk ][ quantity | label ]`. The info
-  box never moves when `✕` / `✓` appear or disappear. The quantity segment is
-  always present (also when empty).
-- **Alert:** dashed line, no quantity / separator / label. A control box with
-  **one icon only** (`alertIcon`, default `🗑`), vertically centred on the line
-  and horizontally centred in the pane, **only while hovered / pressed**.
-  Width = max(28, icon width + 2 × padding). Needs `'cancel'` in `actions`,
-  otherwise the alert is just a draggable line. No outside buttons.
-- **Holding** (new, for future use cases): the break-even style line. Dotted
-  line, label-only box (`border | label | border`, same 5rem right offset), no
-  quantity, no buttons, no end dot. **Fully static:** it is skipped by hit
-  testing, hover, drag, click and the context-menu `line` payload (a right
-  click on it reports `line: null`). The **host** owns the label text (abs and %
-  distance to the current price) and must call `updateLine(id, { label })` (and
-  `price` if it moves) when the numbers change.
-- **`✕` / `✓` visibility (CHANGED v1.2, was "unconfirmed: always"):** order
-  buttons only exist **while the line is hovered** (line band, info box, the
-  row between the info box and the buttons, the buttons themselves, or while
-  pressed / dragged). Unconfirmed: `✕` + `✓`; confirmed: `✕` only. `✕` needs
-  `'cancel'`, `✓` needs `'confirm'` in `actions`. Alerts ignore `confirm` and
-  `confirmed`; holdings ignore everything. Button slots are laid out even while
-  hidden, so nothing shifts on hover; the hover region (`LineLayout.region`)
-  covers the gaps, so the pointer can travel from the info box to the buttons.
+  (`round(fontSize * 22 / 12)`); disks are `rowHeight` wide.
+- **Margins (DECIDED):** every text has `TEXT_PADDING` = 8px on both sides
+  (segment = measured text + 2 × padding). Only an *empty* segment gets a
+  minimum width (quantity 28, label 22).
+- **Order** (default): dash-dot line + end dot; right edge of the info box is
+  **5rem** from the pane's right edge. Left to right:
+  `[ ✕ disk ][ ✓ disk ][ grip | quantity | label ]`. The grip (18px, dots) is
+  drag-only. The info box never moves when `✕` / `✓` appear or disappear. The
+  quantity segment is always present.
+- **Alert:** dashed line, `label | ✕` box (no grip, no quantity, no outside
+  buttons) centred horizontally in the pane and vertically on the line, shown
+  **only while the line is hovered / pressed**. The label segment is a
+  drag-only area (no edit request); the `✕` segment needs `'cancel'` in
+  `actions`, otherwise the box is label only.
+- **Holding:** dotted line, no end dot, static box
+  `label | holdingAmount | holdingAbsGain | holdingRelGain` (label defaults to
+  `Owned`; values come from `extraData`; absent / empty values are skipped
+  together with their separator). Same 5rem right offset as orders. **Fully
+  static:** skipped by hit testing, hover, drag, click and the context-menu
+  `line` payload (right click reports `line: null`). The host formats the
+  values and keeps them current with `updateLine(id, { extraData })`.
+- **`✕` / `✓` visibility (DECIDED, order only):** unconfirmed → both always
+  visible; confirmed → `✓` removed, `✕` only while hovered (line band, info
+  box, the row between box and buttons, the buttons, or while pressed /
+  dragged). `✕` needs `'cancel'`, `✓` needs `'confirm'` in `actions`. Alerts
+  ignore `confirm` / `confirmed`; holdings ignore everything. Button slots are
+  laid out even while hidden, so nothing shifts on hover, and the hover region
+  (`LineLayout.region`) covers the gaps between box and buttons.
 - **Masking:** pass 1 draws all lines; pass 2 draws all controls (background
   fill, then 1px border), so every control hides every line beneath it.
 - **Hit order:** controls of all interactive lines (last added first; `confirm,
   cancel, quantity, label`), then line bands. `hitTest()` external ids:
-  `interactive-price-lines:<id>:<area>` with area ∈ `quantity | label | cancel
-  | confirm | line` (`grip` was removed in v1.2). Cursor: `ns-resize` on `line`,
-  `pointer` otherwise.
+  `interactive-price-lines:<id>:<area>` with area ∈ `grip | quantity | label |
+  cancel | confirm | line`. Cursor: `ns-resize` on `grip` and `line`, `pointer`
+  otherwise.
 - **Gesture:** press on any hit arms (no side effects yet). Movement ≥ 4 CSS px
   starts a price drag from any area (grab offset kept, no jump). Release
   without that movement is a click: `quantity` / `label` → `editRequested`,
-  `cancel` / `confirm` → `actionClicked`. `pointercancel` aborts and restores
+  `cancel` / `confirm` → `actionClicked`; `grip` → nothing. `pointercancel` aborts and restores
   the original price. `handleScroll` / `handleScale` are disabled from the
   **press** (not only from the first move, so a touch pan cannot start before
   the threshold) and restored on up / cancel.
@@ -185,24 +181,20 @@ hit-testable.
 
 ### Verification so far
 
-v1.1: typechecked against `lightweight-charts@5`, headless smoke test (fake
-chart / pointer events).
+v1.1: typechecked against `lightweight-charts@5`, headless smoke test.
 
-v1.2 (done in the cloud sandbox, which had **no** `lightweight-charts`,
-`pnpm install` or network): the plugin and the demo were typechecked with
-`strict`, `noUnusedLocals` against hand-written stub typings, then run in
-headless Chromium (devicePixelRatio 2) against a fake chart (linear price
-scale, canvas, real pointer events) so that the **actual** demo code ran. Checked:
-idle state shows no buttons; hover on an unconfirmed order shows `✕ ✓`,
-a confirmed order only `✕`; hover survives the gaps between the box and the
-buttons and between the two buttons, and ends when the pointer leaves; confirm
-click fires `confirm` and drops `✓`; dragging an order fires `priceChanged`;
-the holding line neither drags nor fires events and a right click on it gives
-the "add alert" menu; alert hover shows the centred `🗑` box; `fontSize` 9 / 12 /
-16 / 20 scale the rows; `fontColor` → `color` → `#fff` fallback; `fontSize: 0`
-throws. **Not verified:** the real `lightweight-charts` rendering pipeline,
-pixel match against images 1 and 2 on the real chart, and `🗑` glyph look on
-macOS / Windows (colour emoji; set `alertIcon: '✕'` for a line-coloured glyph).
+v1.2 / v1.3 (cloud sandbox without `lightweight-charts`, `pnpm install` or
+network): plugin and demo typechecked (`strict`, `noUnusedLocals`) against
+hand-written stub typings, then run in headless Chromium (devicePixelRatio 2)
+against a fake chart (linear price scale, canvas, real pointer events) so that
+the **actual** demo code ran. Checked in v1.3: unconfirmed order shows `✕ ✓`
+without hover; confirmed order shows only `✕` and only on hover, hover survives
+the gaps; grip / box drag fires `priceChanged`; alert hover shows
+`Alert | ✕`, dragging it by the label works and clicking `✕` fires `cancel`;
+holding renders `Owned | 123 | +123,12 | +13,12 %`, is inert and a right click
+on it gives the "add alert" menu; `fontSize` / `fontColor` fallbacks from v1.2.
+**Not verified:** the real `lightweight-charts` pipeline and pixel match
+against images 1 and 2.
 
 ## Agreed host / plugin boundary
 
@@ -222,21 +214,21 @@ provide an accessible editable input by themselves.
 | Topic | Decision |
 | --- | --- |
 | Version source | `package.json`; `Version-X.Y.txt` kept in sync |
-| Dragging | The **entire line and all controls** are draggable (orders, alerts). Holdings are static. No grip column since v1.2 |
+| Dragging | The **entire line and all controls** are draggable (orders, alerts). Orders also have a grip column; alerts have none. Holdings are static |
 | Click vs drag | Press arms; movement ≥ 4 CSS px starts a drag; release without it is a click. Actions and edits fire on pointer-up |
 | `✓` confirm | Only confirm tells the host to commit the real order. Once confirmed `✓` is **removed** |
 | `✕` / `✓` placement | Both left of the `quantity \| label` box |
-| `✕` / `✓` visibility | **v1.2:** orders only, **hover only** for both. Unconfirmed: `✕` + `✓`; confirmed: `✕` only (user: buttons "always seem visible", hover ignored) |
+| `✕` / `✓` visibility | Orders only. Unconfirmed: both always visible. Confirmed: `✓` gone, `✕` only on hover (v1.2 hover-only change **reverted** in v1.3 by the user) |
 | `lineType` | `'alert' \| 'order' \| 'holding'`, **immutable** after `addLine` |
 | Background colour | Passed once to the plugin (or taken from the chart's solid background, else `#020305`); no theme switching |
 | Colours | **No token handling in the plugin.** Background, line/icon colour (`color`), text colour (`fontColor` → `color` → `#fff`) |
-| Info box margins | v1.2: `border \| quantity \| separator \| label \| border`, all side margins 8px; grip column removed |
-| Alert style | v1.2: centred single-icon box (`🗑`, option `alertIcon`), no quantity / separator, hover only, no outside buttons |
-| Holding | v1.2: static break-even line, label-only box, host keeps label (abs, %) current |
+| Info box margins | v1.2: every text has 8px left / right; empty segments get a minimum width. The order grip stays (user likes it) |
+| Alert style | v1.3: centred `label \| ✕` box (label default `Alert` set by host), no grip / quantity, hover only, no outside buttons. Trashcan dropped |
+| Holding | v1.3: static line, box `Owned \| amount \| abs gain \| rel gain` from `extraData`, host formats and updates the values |
 | Context menu | Right click anywhere on the chart: `preventDefault()` + `contextMenuRequested` event to the host, which owns the menu |
 | Tests | Do not exist yet; create `tests/interactions` and `tests/graphics` from scratch (runner to be decided with the user) |
 
-## Checklist (v1.2)
+## Checklist (v1.3)
 
 Status legend: `[ ]` open, `[x]` done. Update this list every drop.
 
@@ -246,7 +238,7 @@ Status legend: `[ ]` open, `[x]` done. Update this list every drop.
 4. Quantity field always rendered for orders `[x]`
 5. Alert-line interactions and visual design `[x]` (redesigned v1.2)
 6. Order-line interactions and visual design `[x]`
-7. Styling options passed by the host `[x]` (`backgroundColor`, `fontFamily`, `borderRadius`, `alertIcon`; per line `fontColor`, `fontSize`)
+7. Styling options passed by the host `[x]` (`backgroundColor`, `fontFamily`, `borderRadius`; per line `fontColor`, `fontSize`)
 8. Tests `[ ]`: **parked by the user for now.** When picked up, create them in
    `tests/interactions` and `tests/graphics`; decide the runner with the user.
    Minimum coverage: alert band hit area, hover reveal of the alert box,
@@ -256,27 +248,23 @@ Status legend: `[ ]` open, `[x]` done. Update this list every drop.
    `fontSize` validation, holding is static, `lineType` immutability,
    context-menu payload, drag restoring host scroll/scale options.
 9. `fontColor` / `fontSize` per line `[x]`
-10. Equal info box margins `[x]`
-11. Buttons only on hover `[x]`
+10. Equal text margins `[x]`
+11. Hover rule: unconfirmed always visible (v1.2 change reverted) `[x]`
 12. `holding` line type `[x]`
-13. Alert box restyle (single icon, no separator) `[x]`
+13. Alert box `label | ✕` `[x]`
+14. `extraData` (`holdingAmount`, `holdingAbsGain`, `holdingRelGain`) `[x]`
 
 ## Open items
 
 - Item 8 (tests): parked by the user.
-- **To confirm with the user (v1.2 interpretations, each is a small change):**
-  1. *Hover rule.* v1.2 shows `✕` / `✓` **only on hover, also for unconfirmed
-     orders** (the old "unconfirmed: always visible" decision is dropped).
-     Revert = `hovered &&` in the two button conditions in `layoutLine()`.
-  2. *Grip removed.* The user's margin spec lists no grip, so the grip column
-     is gone and the whole box is the drag area. Re-adding it is a new segment
-     in `layoutLine()` plus its hit area.
-  3. *Alert box is hover-only* (as decided in v1.1), now with a `🗑` icon. If it
-     should be permanently visible, remove the `hovered &&` in the alert branch.
-  4. *Holding is fully inert*: not hit-testable, not in the context-menu
-     payload. Say so if the host wants right click / hover on it.
-  5. *Holding box position:* same 5rem right offset as orders, label only.
-- Visual review of v1.2 in the real demo (`pnpm ... dev`): see "Verification so far" for what could not be checked in the sandbox.
+- **To confirm with the user (v1.3 interpretations):**
+  1. *Alert box is hover-only* (v1.1 decision), now `Alert | ✕`. If it should
+     be permanently visible, drop the `if (!hovered) return ...` line in the
+     alert branch of `layoutLine()`.
+  2. *Holding is fully inert*: not hit-testable, not in the context-menu payload.
+  3. *`extraData` values are drawn as passed* (no number formatting, no sign
+     colouring); the `%` sign is part of the string the host sends.
+- Visual review of v1.3 in the real demo (`pnpm ... dev`): see "Verification so far" for what could not be checked in the sandbox.
 - Known limitation (unchanged from v1.0): pointer coordinates are relative to
   the chart container and assume the pane starts at x = 0 (no left price scale).
 - Hover-only buttons have no touch equivalent (no hover on touch); a tap on the
@@ -327,7 +315,7 @@ the user if anything should differ, there is no blue token):
 ## Demo fixtures (use in `src/example/example.ts`)
 
 ```ts
-// FONT_COLOR = token('--text-primary'); holdingLabel() = `BE 97.80  +1.28 (+1.31%)` (abs and % vs current price)
+// FONT_COLOR = token('--text-primary'); HOLDING_EXTRA = { holdingAmount: '123', holdingAbsGain: '+123,12', holdingRelGain: '+13,12 %' }
 export const DEMO_LINES = [
   { id: 'alert', price: 102.5, color: DEMO_COLORS.alert, fontColor: FONT_COLOR, label: 'Alert', quantity: '', actions: ['cancel'], lineType: 'alert' },
   { id: 'buy-limit', price: 96.5, color: DEMO_COLORS.buy, fontColor: FONT_COLOR, label: 'Buy Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
@@ -335,13 +323,13 @@ export const DEMO_LINES = [
   { id: 'sell-stop-loss', price: 94, color: DEMO_COLORS.sell, fontColor: FONT_COLOR, label: 'Stop Loss', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
   { id: 'sell-trailing-stop', price: 91.5, color: DEMO_COLORS.trailing, fontColor: FONT_COLOR, label: 'Trailing Stop', quantity: '', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
   { id: 'sell-limit', price: 108, color: DEMO_COLORS.sellLimit, fontColor: FONT_COLOR, label: 'Sell Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
-  { id: 'holding', price: 97.8, color: DEMO_COLORS.holding, fontColor: FONT_COLOR, label: holdingLabel(97.8), lineType: 'holding' },
+  { id: 'holding', price: 97.8, color: DEMO_COLORS.holding, fontColor: FONT_COLOR, label: 'Owned', extraData: HOLDING_EXTRA, lineType: 'holding' },
 ];
 ```
 
 This differs from the user's earlier fixtures (cancel-only, no `confirmed`) on
 purpose so the demo exercises both button sets and the empty-quantity
-segment (`sell-trailing-stop`). The `holding` fixture was added in v1.2.
+segment (`sell-trailing-stop`). The `holding` fixture was added in v1.2 and uses `extraData` since v1.3.
 
 The demo creates the chart with `layout.background` =
 the same background passed to the plugin; shows a minimal host-owned context
@@ -364,7 +352,7 @@ the host-owned HTML editor for quantity / label edits.
   the series whose price scale the levels use.
 - `lineType` drives behaviour: `alert` → whole-line drag, centred hover icon
   box, no labels; `order` → info box + hover buttons; `holding` → static
-  label box.
+  multi-segment box.
 - Layout constants (base row height 22 @ 12px font, text padding 8, gaps, min
   widths, 4px threshold, ±2px band, 5rem offset) are at the top of the source
   file.

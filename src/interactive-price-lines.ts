@@ -17,9 +17,9 @@ export type InteractivePriceLineAction = 'cancel' | 'confirm';
 export type InteractivePriceLineField = 'quantity' | 'label';
 /**
  * Immutable after `addLine`.
- * - `order`: draggable, `quantity | label` box, outside `✕` / `✓` buttons (on hover).
- * - `alert`: draggable, centred control box with a single icon (on hover), no quantity.
- * - `holding`: static break-even style line with a label box. No drag, no controls, no events.
+ * - `order`: draggable, `grip | quantity | label` box, outside `✕` / `✓` buttons.
+ * - `alert`: draggable, centred `label | ✕` box (on hover), no quantity, no grip, no outside buttons.
+ * - `holding`: static line with an `Owned | amount | abs gain | rel gain` box. No drag, no controls, no events.
  */
 export type InteractivePriceLineType = 'alert' | 'order' | 'holding';
 
@@ -31,8 +31,16 @@ export interface InteractivePriceLinesOptions {
 	fontFamily?: string;
 	/** Corner radius of control boxes, in CSS px. Default 6. */
 	borderRadius?: number;
-	/** Glyph of the alert control box. Default `🗑`; `✕` is the plain alternative. */
-	alertIcon?: string;
+}
+
+/** Additional, line type specific data. Values are display strings formatted by the host (drawn as is). */
+export interface InteractivePriceLineExtraData {
+	/** `holding`: amount owned, e.g. `123`. */
+	holdingAmount?: string | number;
+	/** `holding`: absolute gain, e.g. `+123,12`. */
+	holdingAbsGain?: string | number;
+	/** `holding`: relative gain, e.g. `+13,12 %`. */
+	holdingRelGain?: string | number;
 }
 
 /** Input used to create a line. `id` belongs to the host application's domain. */
@@ -49,12 +57,14 @@ export interface InteractivePriceLineOptions {
 	fontSize?: number;
 	/** Orders only; ignored by `alert` and `holding`. */
 	quantity?: string;
-	/** Orders and holdings. For a holding the host sends the distance text (abs and %) and keeps it current. */
+	/** Orders, alerts and holdings (a holding defaults to `Owned`). */
 	label?: string;
 	/** Orders (`cancel`, `confirm`) and alerts (`cancel`). Ignored by `holding`. */
 	actions?: readonly InteractivePriceLineAction[];
 	/** Orders only. Set by the host (via `updateLine`) after it committed the order. Default `false`. */
 	confirmed?: boolean;
+	/** Line type specific data; `holding` draws the present values after its label, in the order amount, abs gain, rel gain. */
+	extraData?: InteractivePriceLineExtraData;
 }
 
 /** A rectangle in viewport coordinates, for positioning a host-owned editor. */
@@ -77,6 +87,7 @@ export interface InteractivePriceLine {
 	label: string;
 	actions: readonly InteractivePriceLineAction[];
 	confirmed: boolean;
+	extraData: InteractivePriceLineExtraData;
 }
 
 export interface InteractivePriceLineEditRequest {
@@ -104,7 +115,7 @@ export interface InteractivePriceLineContextMenuEvent {
 	clientY: number;
 }
 
-type HitArea = 'quantity' | 'label' | 'line' | InteractivePriceLineAction;
+type HitArea = 'grip' | 'quantity' | 'label' | 'line' | InteractivePriceLineAction;
 
 interface Rect { left: number; top: number; width: number; height: number; }
 interface StoredLine extends Omit<InteractivePriceLine, 'fontColor'> {
@@ -120,18 +131,22 @@ interface Metrics {
 	fontFamily: string;
 	borderRadius: number;
 	background: string;
-	alertIcon: string;
 }
 
 interface InfoBox {
 	rect: Rect;
+	/** Orders: drag-only handle with dots. Alerts: the label segment (drag only). */
+	grip: Rect | null;
 	/** Orders only. */
 	quantity: Rect | null;
-	/** Hit area of the label segment; includes the separator when there is one. */
-	label: Rect;
-	/** Where the label text is centred (the label segment without the separator). */
-	labelText: Rect;
-	separatorX: number | null;
+	/** Hit area of the label segment (includes its separator); orders only, it opens the editor. */
+	label: Rect | null;
+	/** All texts with the rect they are centred in. */
+	texts: { text: string; rect: Rect }[];
+	/** x of each separator line. */
+	separators: number[];
+	/** Draw the grip dots. */
+	dots: boolean;
 }
 interface LineLayout {
 	y: number;
@@ -163,13 +178,13 @@ const BASE_FONT_SIZE = 12;
 /** Row height at `BASE_FONT_SIZE`; scales proportionally with `fontSize`. */
 const BASE_ROW_HEIGHT = 22;
 const CONTROL_GAP = 6;
+const GRIP_WIDTH = 18;
 const SEPARATOR_WIDTH = 1;
 /** Left and right margin between a box border / the separator and the text next to it. */
 const TEXT_PADDING = 8;
 /** Widths of empty segments (the quantity segment of an order is always present). */
 const MIN_QUANTITY_WIDTH = 28;
 const MIN_LABEL_WIDTH = 22;
-const MIN_ALERT_BOX_WIDTH = 28;
 /** Gap between the pane's right edge (price scale) and the order / holding boxes. */
 const RIGHT_OFFSET_REM = 5;
 /** The line is draggable within this many CSS px above and below it. */
@@ -184,7 +199,6 @@ const FALLBACK_BACKGROUND = '#020305';
 const DEFAULT_COLOR = '#F23645';
 const DEFAULT_FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
 const DEFAULT_RADIUS = 6;
-const DEFAULT_ALERT_ICON = '🗑';
 const ID_PREFIX = 'interactive-price-lines';
 
 function contains(rect: Rect, x: number, y: number): boolean {
@@ -213,38 +227,64 @@ function segmentWidth(text: string, fontSize: number, minWidth: number, m: Metri
 /**
  * Single geometry source shared by drawing and hit testing (CSS px, pane coordinates).
  * Hidden controls are `null` and therefore neither painted nor hit-testable.
- * Orders and alerts only show their buttons while hovered (or pressed / dragged).
+ * Orders: `✓` while unconfirmed, `✕` while unconfirmed or hovered. Alerts: the whole box only while hovered.
  */
 function layoutLine(line: InteractivePriceLine, y: number, paneWidth: number, m: Metrics, hovered: boolean): LineLayout {
 	const rowHeight = rowHeightFor(line.fontSize);
 	const band: Rect = { left: 0, top: y - LINE_HIT_TOLERANCE, width: paneWidth, height: LINE_HIT_TOLERANCE * 2 };
 	const top = y - rowHeight / 2;
+	const rightEdge = paneWidth - RIGHT_OFFSET_REM * m.remPx;
+	const seg = (left: number, width: number): Rect => ({ left, top, width, height: rowHeight });
 
 	if (line.lineType === 'alert') {
-		const width = Math.max(MIN_ALERT_BOX_WIDTH, Math.ceil(m.measure(m.alertIcon, line.fontSize)) + TEXT_PADDING * 2);
-		const cancel = hovered && line.actions.includes('cancel')
-			? { left: Math.round((paneWidth - width) / 2), top, width, height: rowHeight }
-			: null;
-		return { y, band, info: null, cancel, confirm: null, region: null };
+		// border | pad label pad | separator | ✕ | border, centred in the pane. Needs `cancel` for the ✕ segment.
+		if (!hovered) return { y, band, info: null, cancel: null, confirm: null, region: null };
+		const hasCancel = line.actions.includes('cancel');
+		const labelWidth = segmentWidth(line.label, line.fontSize, MIN_LABEL_WIDTH, m);
+		const cancelWidth = hasCancel ? SEPARATOR_WIDTH + rowHeight : 0;
+		const width = labelWidth + cancelWidth;
+		const left = Math.round((paneWidth - width) / 2);
+		const grip = seg(left, labelWidth);
+		const cancel = hasCancel ? seg(left + labelWidth + SEPARATOR_WIDTH, rowHeight) : null;
+		const info: InfoBox = {
+			rect: seg(left, width), grip, quantity: null, label: null, dots: false,
+			texts: [{ text: line.label, rect: grip }], separators: hasCancel ? [left + labelWidth] : [],
+		};
+		return { y, band, info, cancel, confirm: null, region: null };
 	}
 
-	// border | pad quantity pad | separator | pad label pad | border: every side margin is TEXT_PADDING.
-	const rightEdge = paneWidth - RIGHT_OFFSET_REM * m.remPx;
 	if (line.lineType === 'holding') {
-		const width = segmentWidth(line.label, line.fontSize, MIN_LABEL_WIDTH, m);
-		const label: Rect = { left: Math.max(0, rightEdge - width), top, width, height: rowHeight };
-		return { y, band, info: { rect: label, quantity: null, label, labelText: label, separatorX: null }, cancel: null, confirm: null, region: null };
+		// Owned | amount | abs gain | rel gain: label plus whichever extra values are present.
+		const { holdingAmount, holdingAbsGain, holdingRelGain } = line.extraData;
+		const texts = [line.label, holdingAmount, holdingAbsGain, holdingRelGain]
+			.filter((value, index) => index === 0 || (value !== undefined && String(value) !== ''))
+			.map(value => String(value));
+		const widths = texts.map(text => segmentWidth(text, line.fontSize, MIN_LABEL_WIDTH, m));
+		const total = widths.reduce((sum, width) => sum + width, 0) + SEPARATOR_WIDTH * (texts.length - 1);
+		let cursor = Math.max(0, rightEdge - total);
+		const rect = seg(cursor, total);
+		const separators: number[] = [];
+		const placed = texts.map((text, index) => {
+			if (index > 0) { separators.push(cursor); cursor += SEPARATOR_WIDTH; }
+			const r = seg(cursor, widths[index]); cursor += widths[index]; return { text, rect: r };
+		});
+		return { y, band, info: { rect, grip: null, quantity: null, label: null, dots: false, texts: placed, separators }, cancel: null, confirm: null, region: null };
 	}
 
+	// grip | pad quantity pad | separator | pad label pad | border: text margins are all TEXT_PADDING.
 	const quantityWidth = segmentWidth(line.quantity, line.fontSize, MIN_QUANTITY_WIDTH, m);
 	const labelWidth = segmentWidth(line.label, line.fontSize, MIN_LABEL_WIDTH, m);
-	const infoWidth = quantityWidth + SEPARATOR_WIDTH + labelWidth;
+	const infoWidth = GRIP_WIDTH + quantityWidth + SEPARATOR_WIDTH + labelWidth;
 	// The info box is anchored to the right offset and never moves when ✕ / ✓ appear or disappear.
 	const infoLeft = Math.max(0, rightEdge - infoWidth);
-	const quantity: Rect = { left: infoLeft, top, width: quantityWidth, height: rowHeight };
-	const label: Rect = { left: infoLeft + quantityWidth, top, width: SEPARATOR_WIDTH + labelWidth, height: rowHeight };
-	const labelText: Rect = { left: label.left + SEPARATOR_WIDTH, top, width: labelWidth, height: rowHeight };
-	const info: InfoBox = { rect: { left: infoLeft, top, width: infoWidth, height: rowHeight }, quantity, label, labelText, separatorX: label.left };
+	const grip = seg(infoLeft, GRIP_WIDTH);
+	const quantity = seg(infoLeft + GRIP_WIDTH, quantityWidth);
+	const label = seg(quantity.left + quantityWidth, SEPARATOR_WIDTH + labelWidth);
+	const labelText = seg(label.left + SEPARATOR_WIDTH, labelWidth);
+	const info: InfoBox = {
+		rect: seg(infoLeft, infoWidth), grip, quantity, label, dots: true,
+		texts: [{ text: line.quantity, rect: quantity }, { text: line.label, rect: labelText }], separators: [label.left],
+	};
 
 	// Slots are laid out whether or not the buttons are visible, so nothing moves on hover.
 	let cursor = infoLeft;
@@ -252,14 +292,13 @@ function layoutLine(line: InteractivePriceLine, y: number, paneWidth: number, m:
 	let cancel: Rect | null = null;
 	if (!line.confirmed && line.actions.includes('confirm')) {
 		cursor -= CONTROL_GAP + rowHeight;
-		if (hovered) confirm = { left: cursor, top, width: rowHeight, height: rowHeight };
+		confirm = seg(cursor, rowHeight);
 	}
 	if (line.actions.includes('cancel')) {
 		cursor -= CONTROL_GAP + rowHeight;
-		if (hovered) cancel = { left: cursor, top, width: rowHeight, height: rowHeight };
+		if (!line.confirmed || hovered) cancel = seg(cursor, rowHeight);
 	}
-	const region: Rect = { left: cursor, top, width: infoLeft + infoWidth - cursor, height: rowHeight };
-	return { y, band, info, cancel, confirm, region };
+	return { y, band, info, cancel, confirm, region: seg(cursor, infoLeft + infoWidth - cursor) };
 }
 
 interface Hit { line: StoredLine; area: HitArea; rect: Rect; }
@@ -272,8 +311,10 @@ function controlAt(layout: LineLayout, line: InteractivePriceLine, x: number, y:
 		if (hit) return { area: 'cancel', rect: layout.cancel };
 	}
 	if (layout.info !== null) {
-		if (layout.info.quantity !== null && contains(layout.info.quantity, x, y)) return { area: 'quantity', rect: layout.info.quantity };
-		if (contains(layout.info.label, x, y)) return { area: 'label', rect: layout.info.label };
+		const { quantity, label, grip } = layout.info;
+		if (quantity !== null && contains(quantity, x, y)) return { area: 'quantity', rect: quantity };
+		if (label !== null && contains(label, x, y)) return { area: 'label', rect: label };
+		if (grip !== null && contains(grip, x, y)) return { area: 'grip', rect: grip };
 	}
 	return null;
 }
@@ -331,24 +372,31 @@ class LinesRenderer implements IPrimitivePaneRenderer {
 				}
 			}
 
-			// Pass 2: controls. Borders, separator and icons use the line colour; quantity / label use `fontColor`.
+			// Pass 2: controls. Borders, separators, dots and icons use the line colour; texts use `fontColor`.
 			for (const { line, layout } of this._entries) {
 				if (layout.info !== null) {
-					const { rect, quantity, labelText, separatorX } = layout.info;
+					const { rect, grip, dots, texts, separators } = layout.info;
 					box(rect, line.color);
-					if (separatorX !== null) {
-						const inset = Math.round(rect.height * 4 / BASE_ROW_HEIGHT);
-						const sepX = Math.round(separatorX * h) + lw / 2;
+					const inset = Math.round(rect.height * 4 / BASE_ROW_HEIGHT);
+					if (dots && grip !== null) {
+						ctx.fillStyle = line.color;
+						for (let col = 0; col < 2; col++) for (let row = 0; row < 3; row++) {
+							ctx.beginPath();
+							ctx.arc((grip.left + grip.width / 2 - 2 + col * 4) * h, (grip.top + grip.height / 2 - 4 + row * 4) * v, 1.1 * h, 0, Math.PI * 2);
+							ctx.fill();
+						}
+					}
+					for (const x of separators) {
+						const sepX = Math.round(x * h) + lw / 2;
 						ctx.beginPath(); ctx.moveTo(sepX, Math.round((rect.top + inset) * v)); ctx.lineTo(sepX, Math.round((rect.top + rect.height - inset) * v));
 						ctx.strokeStyle = line.color; ctx.lineWidth = lw; ctx.stroke();
 					}
-					if (quantity !== null) text(line.quantity, quantity, line.fontColor, line.fontSize);
-					text(line.label, labelText, line.fontColor, line.fontSize);
+					for (const { text: value, rect: r } of texts) text(value, r, line.fontColor, line.fontSize);
 				}
 				if (layout.confirm !== null) { disk(layout.confirm, line.color); text('✓', layout.confirm, line.color, line.fontSize); }
 				if (layout.cancel !== null) {
-					if (line.lineType === 'alert') { box(layout.cancel, line.color); text(m.alertIcon, layout.cancel, line.color, line.fontSize); }
-					else { disk(layout.cancel, line.color); text('✕', layout.cancel, line.color, line.fontSize); }
+					if (line.lineType !== 'alert') disk(layout.cancel, line.color);
+					text('✕', layout.cancel, line.color, line.fontSize);
 				}
 			}
 			ctx.restore();
@@ -413,7 +461,7 @@ export class InteractivePriceLines extends PluginBase {
 	public hitTest(x: number, y: number): PrimitiveHoveredItem | null {
 		const hit = this._hitAt(x, y);
 		if (hit === null) return null;
-		return { externalId: `${ID_PREFIX}:${hit.line.id}:${hit.area}`, zOrder: 'top', cursorStyle: hit.area === 'line' ? 'ns-resize' : 'pointer' };
+		return { externalId: `${ID_PREFIX}:${hit.line.id}:${hit.area}`, zOrder: 'top', cursorStyle: hit.area === 'line' || hit.area === 'grip' ? 'ns-resize' : 'pointer' };
 	}
 
 	public addLine(options: InteractivePriceLineOptions): InteractivePriceLine {
@@ -424,8 +472,8 @@ export class InteractivePriceLines extends PluginBase {
 		const line: StoredLine = {
 			id: options.id, price: options.price, lineType: options.lineType ?? 'order', color, fontSize,
 			colorOption: options.color, fontColorOption: options.fontColor,
-			quantity: options.quantity ?? '', label: options.label ?? 'Price line', actions: options.actions ?? [],
-			confirmed: options.confirmed ?? false,
+			quantity: options.quantity ?? '', actions: options.actions ?? [], confirmed: options.confirmed ?? false,
+			label: options.label ?? (options.lineType === 'holding' ? 'Owned' : 'Price line'), extraData: { ...options.extraData },
 			// The canvas draws the line itself (so controls can mask it); the native line only provides the axis label.
 			priceLine: series.createPriceLine({ id: `${ID_PREFIX}:${options.id}`, price: options.price, color, lineWidth: 1, lineVisible: false, axisLabelVisible: true }),
 		};
@@ -445,6 +493,7 @@ export class InteractivePriceLines extends PluginBase {
 		if (patch.label !== undefined) line.label = patch.label;
 		if (patch.actions !== undefined) line.actions = patch.actions;
 		if (patch.confirmed !== undefined) line.confirmed = patch.confirmed;
+		if (patch.extraData !== undefined) line.extraData = { ...patch.extraData };
 		this.requestUpdate(); return this._publicLine(line);
 	}
 
@@ -581,7 +630,6 @@ export class InteractivePriceLines extends PluginBase {
 			fontFamily: font,
 			borderRadius: this._options.borderRadius ?? DEFAULT_RADIUS,
 			background: this._options.backgroundColor ?? this._chartBackground(),
-			alertIcon: this._options.alertIcon ?? DEFAULT_ALERT_ICON,
 		};
 	}
 
@@ -661,6 +709,6 @@ export class InteractivePriceLines extends PluginBase {
 
 	private _publicLine(line: StoredLine): InteractivePriceLine {
 		const { id, price, lineType, color, fontSize, quantity, label, actions, confirmed } = line;
-		return { id, price, lineType, color, fontColor: line.fontColorOption ?? line.colorOption ?? TEXT_COLOR, fontSize, quantity, label, actions, confirmed };
+		return { id, price, lineType, color, fontColor: line.fontColorOption ?? line.colorOption ?? TEXT_COLOR, fontSize, quantity, label, actions, confirmed, extraData: { ...line.extraData } };
 	}
 }

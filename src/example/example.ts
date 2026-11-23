@@ -19,13 +19,8 @@ const DEMO_COLORS = {
 };
 const FONT_COLOR = token('--text-primary');
 
-// Host responsibility: the holding label carries abs and % distance to the current price and must be re-sent on every tick.
-const CURRENT_PRICE = 100 + Math.sin(79 / 5) * 10;
-const holdingLabel = (price: number): string => {
-	const distance = CURRENT_PRICE - price;
-	const sign = distance >= 0 ? '+' : '−';
-	return `BE ${price.toFixed(2)}  ${sign}${Math.abs(distance).toFixed(2)} (${sign}${Math.abs(distance / price * 100).toFixed(2)}%)`;
-};
+// Host responsibility: holding values are display strings, formatted (and kept current) by the host.
+const HOLDING_EXTRA = { holdingAmount: '123', holdingAbsGain: '+123,12', holdingRelGain: '+13,12 %' };
 
 export const DEMO_LINES: InteractivePriceLineOptions[] = [
 	{ id: 'alert', price: 102.5, color: DEMO_COLORS.alert, fontColor: FONT_COLOR, label: 'Alert', quantity: '', actions: ['cancel'], lineType: 'alert' },
@@ -34,7 +29,7 @@ export const DEMO_LINES: InteractivePriceLineOptions[] = [
 	{ id: 'sell-stop-loss', price: 94, color: DEMO_COLORS.sell, fontColor: FONT_COLOR, label: 'Stop Loss', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
 	{ id: 'sell-trailing-stop', price: 91.5, color: DEMO_COLORS.trailing, fontColor: FONT_COLOR, label: 'Trailing Stop', quantity: '', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
 	{ id: 'sell-limit', price: 108, color: DEMO_COLORS.sellLimit, fontColor: FONT_COLOR, label: 'Sell Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
-	{ id: 'holding', price: 97.8, color: DEMO_COLORS.holding, fontColor: FONT_COLOR, label: holdingLabel(97.8), lineType: 'holding' },
+	{ id: 'holding', price: 97.8, color: DEMO_COLORS.holding, fontColor: FONT_COLOR, label: 'Owned', extraData: HOLDING_EXTRA, lineType: 'holding' },
 ];
 
 const container = document.getElementById('chart') as HTMLElement;
