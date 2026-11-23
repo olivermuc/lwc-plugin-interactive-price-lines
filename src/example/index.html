@@ -5,13 +5,31 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 		<title>Interactive price lines</title>
 		<style>
-			html, body, #chart { width: 100%; height: 100%; margin: 0; overflow: hidden; }
-			#editor { position: fixed; display: none; z-index: 10; padding: 8px; background: white; border: 1px solid #aaa; box-shadow: 0 2px 8px #0003; }
+			/* Host design tokens (subset used by the demo), resolved in example.ts the way the host does. */
+			:root {
+				--bg-0: #040506; --bg-1: #0d0f12; --bg-2: #14171b;
+				--hairline: rgb(255 255 255 / 6%); --hairline-strong: rgb(255 255 255 / 11%);
+				--hover: rgb(255 255 255 / 4%); --hover-strong: rgb(255 255 255 / 7%);
+				--text-primary: #f3f5f8; --text-secondary: #8e97a4;
+				--accent: #31f2af;
+				--green: rgb(30 255 178); --red: rgb(255 77 100); --yellow: rgb(240 190 60); --orange: rgb(255 124 17);
+				--sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+				--radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px;
+			}
+			html, body, #chart { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--bg-0); color: var(--text-primary); font-family: var(--sans); }
+			#editor, #menu { position: fixed; display: none; z-index: 10; background: var(--bg-1); border: 1px solid var(--hairline-strong); border-radius: var(--radius-md); font-size: 13px; }
+			#editor { padding: 8px; gap: 6px; }
+			#editor input { background: var(--bg-2); color: var(--text-primary); border: 1px solid var(--hairline-strong); border-radius: var(--radius-xs); padding: 4px 6px; font: inherit; }
+			#editor button, #menu button { background: transparent; color: var(--text-primary); border: 0; border-radius: var(--radius-xs); font: inherit; padding: 4px 8px; cursor: pointer; }
+			#editor button:hover, #menu button:hover { background: var(--hover-strong); }
+			#menu { padding: 4px; flex-direction: column; min-width: 160px; }
+			#menu button { text-align: left; }
 		</style>
 	</head>
 	<body>
 		<div id="chart"></div>
-		<form id="editor"><input id="value" aria-label="Edit value" /><button>Confirm</button></form>
+		<form id="editor"><input id="value" aria-label="Edit value" /><button>OK</button></form>
+		<div id="menu" role="menu"></div>
 		<script type="module" src="./example.ts"></script>
 	</body>
 </html>

@@ -1,0 +1,2 @@
+v1.1
+v1.1: Alert and order line redesign, click-vs-drag gestures, hover/confirmed visibility, lineType, context menu event, styling options

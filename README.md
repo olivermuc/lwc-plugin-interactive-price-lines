@@ -9,8 +9,8 @@ This document is the current product and engineering handoff. **Read it fully
 before making the next change.** Together with the source zip it must always be
 enough to start a fresh chat and continue the work.
 
-- **Last released plugin version: v1.0** (see "Current implementation").
-- **Next target: v1.1**: everything under "Required next changes".
+- **Last released plugin version: v1.1** (see "Current implementation").
+- **Next target: v1.2**: the open items under "Open items" (currently only tests).
 
 ## GENERAL project notes (workflow rules, MUST follow)
 
@@ -44,15 +44,13 @@ version constant in the source.
   (v1.1 → `"version": "1.1.0"`).
 - Keep `Version-X.Y.txt` in sync on every drop: rename/replace it so the file
   name and its content match the new version (content: `vX.Y` plus the commit
-  message line). The v1.0 zip has an empty `Version-1.0.txt` and
-  `package.json` at `0.1.0`; the first drop (v1.1) must correct both
-  (package.json → `1.1.0`, add `Version-1.1.txt`, remove `Version-1.0.txt`).
+  message line). Done in v1.1 (`Version-1.1.txt`, `package.json` `1.1.0`).
 
 ## Repository and package
 
 - Repository: `/Users/oliver/Code/lightweight-charts`
 - Package: `packages/lwc-plugin-interactive-price-lines`
-- Entry point: `src/interactive-price-lines.ts` (~270 lines, single file)
+- Entry point: `src/interactive-price-lines.ts` (~520 lines, single file)
 - Demo: `src/example/example.ts` + `src/example/index.html`
 - Reference implementation: `packages/lwc-plugin-user-price-lines`
 - Interaction reference: the official `lwc-plugin-brushable-area-series`
@@ -68,89 +66,106 @@ pnpm --filter @tradingview/lwc-plugin-interactive-price-lines dev --host 127.0.0
 Dependencies: peer `lightweight-charts ^5.0.0`, `fancy-canvas ~2.1.0`,
 workspace `@tradingview/lwc-toolkit` (`Delegate`, `PluginBase`).
 
-## Current implementation (v1.0)
+## Current implementation (v1.1)
 
 `InteractivePriceLines` is a series primitive attached with:
 
 ```ts
-const lines = new InteractivePriceLines(chartContainer);
+const lines = new InteractivePriceLines(chartContainer, {
+  backgroundColor: '#020305',   // optional; else chart layout.background (solid), else #020305
+  fontFamily: '...',            // optional; default system stack
+  borderRadius: 6,              // optional, CSS px
+});
 series.attachPrimitive(lines);
 ```
 
 The chart container is deliberately passed in. The public chart API does not
 expose pointer-down / pointer-up subscriptions, so the primitive uses
-capture-phase `PointerEvent` listeners (`pointerdown`, `pointermove`,
-`pointerup`, `pointercancel`) on the supplied container to support a real held
-drag. While an order handle is held, it temporarily applies
-`{ handleScroll: false, handleScale: false }` and restores the host's prior
-options on pointer-up or pointer-cancel.
+capture-phase listeners (`pointerdown`, `pointermove`, `pointerup`,
+`pointercancel`, `pointerleave`, `contextmenu`) on the supplied container.
 
 Public methods:
 
-- `addLine(options)` creates a tracked price line (also creates a native
-  `series.createPriceLine` for the axis label) and returns its public data.
-  Throws on duplicate id or if not attached.
-- `updateLine(id, patch)` updates price, styling and label data after host
-  validation. Throws on unknown id.
-- `removeLine(id)` removes a tracked line; returns boolean.
-- `lines()` returns the current public line data.
-- `editRequested()`, `actionClicked()`, `priceChanged()` return toolkit
-  subscriptions.
-
-Current events:
+- `addLine(options)` creates a tracked line and returns its public data. Also
+  creates a native `series.createPriceLine` **with `lineVisible: false`**: the
+  native line only supplies the axis label; the canvas draws the visible line
+  (so controls can mask it and it is never doubled). Throws on duplicate id or
+  if not attached.
+- `updateLine(id, patch)` patches `price`, `color`, `quantity`, `label`,
+  `actions`, `confirmed`. `lineType` is immutable (not in the patch type; a
+  runtime `lineType` key throws). Throws on unknown id.
+- `removeLine(id)`, `lines()`.
+- `editRequested()`, `actionClicked()`, `priceChanged()`,
+  `contextMenuRequested()` return toolkit subscriptions.
 
 ```ts
-lines.editRequested().subscribe(({ line, field, anchor }) => {
-  // Host opens its own accessible HTML input at `anchor` (viewport coords).
-  // Commit via lines.updateLine(line.id, { [field]: validatedValue });
-});
-
-lines.actionClicked().subscribe(({ line, action }) => {
-  // Host performs the business action, e.g. cancel or confirm an order.
-});
-
-lines.priceChanged().subscribe(({ line, previousPrice }) => {
-  // Fired on pointer-up with the final drag price.
-});
+lines.editRequested().subscribe(({ line, field, anchor }) => { /* host editor at anchor (viewport px); commit via updateLine */ });
+lines.actionClicked().subscribe(({ line, action }) => { /* 'cancel' → removeLine; 'confirm' → commit, then updateLine(id, { confirmed: true }) */ });
+lines.priceChanged().subscribe(({ line, previousPrice }) => { /* fired on release with the final drag price */ });
+lines.contextMenuRequested().subscribe(({ price, line, clientX, clientY }) => { /* host opens its own menu */ });
 ```
 
-Current types (v1.0): `InteractivePriceLineAction = 'cancel' | 'confirm'`,
+Types: `InteractivePriceLineAction = 'cancel' | 'confirm'`,
 `InteractivePriceLineField = 'quantity' | 'label'`,
-`InteractivePriceLineOptions { id, price, color?, quantity?, label?, actions? }`.
+`InteractivePriceLineType = 'alert' | 'order'`,
+`InteractivePriceLineOptions { id, price, lineType?='order', color?, quantity?, label?, actions?, confirmed?=false }`,
+`InteractivePriceLinesOptions { backgroundColor?, fontFamily?, borderRadius? }`.
 
-### v1.0 rendering / geometry (what exists today, to be replaced)
+### Rendering / geometry (v1.1)
 
-- `lineRects(line, y, paneWidth)` is the single geometry source for drawing and
-  hit testing. Layout is right-aligned in the pane with an 8px margin:
-  handle disk (r=10) → gap 8 → quantity box → label box → cancel box →
-  confirm box. Boxes are 22px high, width `max(22, ceil(len*7.2+16))`.
-- **Quantity width is 0 when `quantity === ''`**, so an empty quantity has no
-  visible or clickable segment. This is the bug behind "quantity field must
-  always render".
-- Colours are hard-coded: handle fill `#101014`, quantity fill `#A71D31`,
-  label fill = line colour, cancel fill `#3C4048` with `×`, confirm fill
-  `#089981` with `✓`, text `#FFFFFF`. None of this matches the target design.
-- The canvas draws its own dashed line (`4px/4px`) across the pane in addition
-  to the native price line created by `addLine`. Verify the two are not
-  visibly doubled when restyling; the canvas line must be the one that masks
-  under controls.
-- Hit test order: `confirm, cancel, quantity, label, handle`; lines iterated in
-  reverse insertion order. `hitTest()` returns external ids
-  `interactive-price-lines:<id>:<area>`, cursor `ns-resize` for the handle,
+`layoutLine()` is the single geometry source for drawing and hit testing (CSS
+px, pane coordinates). Hidden controls have no rect: not painted, not
+hit-testable.
+
+- **Colours (DECIDED):** exactly three: background (option, else chart solid
+  background, else `#020305`), font `#fff` (quantity / label text), and the
+  line colour from `addLine` for line, borders, separator, grip dots and the
+  `✕` / `✓` icons. Colours are opaque strings.
+- **Alert:** dashed line; no drag handle. Hit band = line ±2 CSS px
+  (`LINE_HIT_TOLERANCE`). Rounded 28×22 box with `✕`, horizontally centred in
+  the pane, only while the line is hovered / dragged. Needs `'cancel'` in
+  `actions`, otherwise the alert is just a draggable line.
+- **Order:** dash-dot line + small end dot; right edge of the control group is
+  **5rem** from the pane's right edge (rem resolved from the root font size).
+  Left to right: `[ ✕ disk ][ ✓ disk ][ grip | quantity | separator | label ]`.
+  The info box never moves when `✕` / `✓` appear or disappear. The quantity
+  segment is always present (min width 28px, also when empty). Widths use
+  `measureText` with the configured font.
+- **`✕` / `✓` visibility (DECIDED):** unconfirmed → both always visible.
+  Confirmed → `✓` removed permanently, `✕` only while hovering the line band,
+  the info box, or the `✕` itself (and while pressed / dragging). `✕` needs
+  `'cancel'`, `✓` needs `'confirm'` in `actions`. Alerts ignore `confirm` and
+  `confirmed`.
+- **Masking:** pass 1 draws all lines; pass 2 draws all controls (background
+  fill, then 1px border), so every control hides every line beneath it.
+- **Hit order:** controls of all lines (last added first; `confirm, cancel,
+  quantity, label, grip`), then line bands. `hitTest()` external ids:
+  `interactive-price-lines:<id>:<area>` with area ∈ `grip | quantity | label |
+  cancel | confirm | line`. Cursor: `ns-resize` on `grip` and `line`,
   `pointer` otherwise.
-- Only the handle starts a drag. Pointer-down on any other area fires either
-  `editRequested` (quantity / label) or `actionClicked` immediately (to be
-  replaced by the click-vs-drag gesture model).
-- There is no hover tracking, no `contextmenu` handling, no `lineType`, no
-  background colour option.
+- **Gesture:** press on any hit arms (no side effects yet). Movement ≥ 4 CSS px
+  starts a price drag from any area (grab offset kept, no jump). Release
+  without that movement is a click: `quantity` / `label` → `editRequested`,
+  `cancel` / `confirm` → `actionClicked`. `pointercancel` aborts and restores
+  the original price. `handleScroll` / `handleScale` are disabled from the
+  **press** (not only from the first move, so a touch pan cannot start before
+  the threshold) and restored on up / cancel.
+- **Context menu (DECIDED):** a right click anywhere inside the chart container
+  always calls `preventDefault()` and fires `contextMenuRequested` with
+  `price` (null outside the pane height, e.g. time axis), `line` (control or
+  band hit, else null) and client coordinates. Any pending press is aborted.
+- Style cues from image 2: dash-dot line and end dot adopted; the pointed
+  right edge of the tag and the ghost `SL` / `TP` tags are **not** adopted.
 
-### Prototype verification so far
+### Verification so far
 
-Manual: quantity `10 → 25` via host editor; a held drag changed `105 → 99.17`;
-Cancel emitted an action event. The demo in the zip still uses a single
-`sell-limit-1` line; the user tests locally with the six-line `DEMO_LINES`
-fixture below (with a `DEMO_COLORS` map that is **not** in the zip; recreate
-it in the demo from the host tokens, see "Host design tokens").
+v1.1 was typechecked against `lightweight-charts@5` and exercised with a
+headless smoke test (fake chart / pointer events) covering: alert band ±2px,
+hover reveal and centred `✕`, empty quantity segment, `✕` / `✓` visibility for
+unconfirmed vs confirmed, click-vs-drag, drag without jump, scroll/scale
+restore, pointercancel, context-menu payload, `lineType` immutability. **Not
+yet verified visually in a browser** (pixel appearance vs images 1 and 2,
+font fit, dash pattern): please check the demo and report deviations.
 
 ## Agreed host / plugin boundary
 
@@ -170,165 +185,41 @@ provide an accessible editable input by themselves.
 | Topic | Decision |
 | --- | --- |
 | Version source | `package.json`; `Version-X.Y.txt` kept in sync |
-| Dragging | The **entire line and all controls** are draggable (as in the regular TradingView UI). A dedicated grip box also exists as an explicit affordance |
-| Click vs drag | Press on any control arms a gesture. Movement beyond a small threshold (suggested 4 CSS px) starts a price drag; release without movement is a click (edit / action). Actions and edits fire on pointer-up, not pointer-down |
-| `✓` confirm | Kept. Only confirm tells the host to commit the real order |
+| Dragging | The **entire line and all controls** are draggable. A dedicated grip box also exists as an explicit affordance |
+| Click vs drag | Press arms; movement ≥ 4 CSS px starts a drag; release without it is a click. Actions and edits fire on pointer-up |
+| `✓` confirm | Only confirm tells the host to commit the real order. Once confirmed `✓` is **removed** |
 | `✕` / `✓` placement | Both left of the `quantity \| label` box |
-| `✕` / `✓` visibility | Visible while the order is **not yet confirmed**; once confirmed, only while hovering the price line or the `quantity \| label` box |
+| `✕` / `✓` visibility | Unconfirmed: both always visible. Confirmed: `✓` gone, `✕` only on hover |
 | `lineType` | `'alert' \| 'order'`, **immutable** after `addLine` |
-| Background colour | Passed once to the plugin; **no theme switching**, so no setter / no `applyOptions` for it |
-| Colours | Passed in by the host, resolved from the host CSS tokens (see "Host design tokens") |
-| Context menu `preventDefault` | **Postponed.** Interim behaviour: call `preventDefault()` whenever the plugin emits the event (right click inside the pane) so the host menu shows instead of the browser's. Revisit later |
-| Tests | Do not exist yet; create `tests/interactions` and `tests/graphics` from scratch in this package (the `user-price-lines` folders are only a naming/structure model, they are not available) |
+| Background colour | Passed once to the plugin (or taken from the chart's solid background, else `#020305`); no theme switching |
+| Colours | **No token handling in the plugin.** Three colours only: background, font `#fff`, line/icon colour from `addLine()` |
+| Context menu | Right click anywhere on the chart: `preventDefault()` + `contextMenuRequested` event to the host, which owns the menu |
+| Tests | Do not exist yet; create `tests/interactions` and `tests/graphics` from scratch (runner to be decided with the user) |
 
-## Required next changes (v1.1 checklist)
+## Checklist (v1.1)
 
 Status legend: `[ ]` open, `[x]` done. Update this list every drop.
 
-### 1. Context menu event `[ ]`
+1. Context menu event `[x]`
+2. Explicit line type `[x]`
+3. Order confirmation state `[x]`
+4. Quantity field always rendered for orders `[x]`
+5. Alert-line interactions and visual design `[x]`
+6. Order-line interactions and visual design `[x]`
+7. Styling options passed by the host `[x]` (`backgroundColor`, `fontFamily`, `borderRadius`; hard-coded fills and font removed)
+8. Tests `[ ]`: no tests yet. Create them in `tests/interactions` and
+   `tests/graphics`; decide the runner with the user. Minimum coverage: alert
+   band hit area, hover reveal of alert `✕`, centred alert control, empty
+   quantity segment, 5rem offset, click-vs-drag threshold, grip / `✕` / `✓` /
+   segment hit areas, `✕` / `✓` visibility rules, `lineType` immutability,
+   context-menu payload, drag restoring host scroll/scale options.
 
-Right-clicking the pane must emit a host event suitable for a context menu.
-It must include the clicked price and, when the pointer is close to a plugin
-line/control, that line's `id` and complete public data.
+## Open items
 
-```ts
-interface InteractivePriceLineContextMenuEvent {
-  price: number | null;               // coordinateToPrice(y); null if unavailable
-  line: InteractivePriceLine | null;  // nearest plugin line if close, else null
-  clientX: number;
-  clientY: number;
-}
-
-lines.contextMenuRequested().subscribe(event => openContextMenu(event));
-```
-
-- Listen for `contextmenu` (capture) on the container; use the same
-  `_localPoint` bounds check as the pointer handlers.
-- "Close to a line" = inside any visible control rect of that line, or within
-  the line band (same ±2 CSS px as dragging; document the final value).
-- `preventDefault()`: postponed, see decisions log (interim: whenever emitted).
-  Background: the browser opens its native context menu on right click;
-  `preventDefault()` suppresses it so the host's own menu is the only one.
-- The host uses `updateLine()` and `removeLine()` for target price, styling and
-  lifecycle changes. These exist; make sure `updateLine` covers colour, label,
-  quantity, price, actions and `confirmed`, and works for both line types
-  (`lineType` itself is not patchable).
-
-### 2. Explicit line type `[ ]`
-
-Add `lineType: 'alert' | 'order'` to `InteractivePriceLineOptions` and to the
-public `InteractivePriceLine`. Suggested default `'order'` so v1.0 callers keep
-working; update all existing data (demo) to pass it. **Immutable**: not part of
-the `updateLine` patch type (use `Omit<..., 'id' | 'lineType'>`).
-
-### 3. Order confirmation state `[ ]`
-
-New option/state `confirmed?: boolean` (default `false`) for **order** lines,
-patchable through `updateLine`. The plugin never sets it itself: the host
-commits the order after the `confirm` action and then calls
-`updateLine(id, { confirmed: true })`.
-
-- `✓` is only available/painted while `confirmed === false` and `actions`
-  includes `'confirm'`. After confirmation it disappears.
-- `✕` follows the visibility rule below.
-- Alerts ignore `confirmed` and `confirm`.
-
-### 4. Quantity field `[ ]`
-
-Always render a quantity field for **order** lines, including an empty
-quantity: a visible, clickable segment with a sensible minimum width that
-fires `editRequested({ field: 'quantity', ... })`. Alerts never get one.
-
-### 5. Alert-line interactions and visual design `[ ]`
-
-Reference: image 1 (blue dashed line, centred rounded box). Disregard its left
-side and its trash icon: use `✕`.
-
-- **No drag handle.** Drag anywhere along the horizontal line; hit area is the
-  line plus **2 CSS px above and below**. Extend `_hitAt` (used by the
-  capture-phase pointer handlers) with this band, and keep `hitTest()`
-  consistent for the cursor (`ns-resize` on the band).
-- Drag uses the existing machinery (scroll/scale disabled while held, restored
-  on up/cancel, `priceChanged` on release).
-- The `✕` control is **not visible until the line is hovered.** Needs hover
-  tracking (`pointermove` on the container when not dragging; track hovered
-  line id; `requestUpdate()` on change; clear on `pointerleave`). Keep it
-  visible while the pointer is on the control and while dragging.
-- Control placed at the **horizontal centre of the pane**.
-- Rounded box (host `borderRadius`), chart-background fill, 1px border in the
-  alert's `color`, literal `✕` inside; it **masks the horizontal line beneath**.
-- No label/quantity space; image 1 is authoritative for the presentation.
-- The `✕` click (without drag) fires `actionClicked({ action: 'cancel' })`.
-
-### 6. Order-line interactions and visual design `[ ]`
-
-Reference: image 2 (dash-dot line, round disk at left, tag with grip dots and
-`1 | Sell limit`, dot at far right; ghost `SL` / `TP` tags are out of scope).
-
-Layout, left to right, right-aligned in the pane:
-
-`[ ✕ disk ] [ ✓ disk ] [ grip | quantity | separator | label ]`
-
-- `✕` (round disk, literal `✕`) = cancel; `✓` (round disk, literal `✓`) =
-  confirm. Both sit **left of** the `quantity | label` box.
-- Visibility of `✕` / `✓`: shown while the order is **not confirmed**; once
-  `confirmed`, shown only while the pointer is over the price line or the
-  `quantity | label` box (use the same hover tracking as alerts; keep visible
-  while the pointer is on the controls themselves). Hidden controls must not be
-  hit-testable.
-- **Dragging:** the **whole line and all controls** can start a price drag. A
-  dedicated **grip box** at the left edge of the info box (dotted grip as in
-  image 2) is the explicit affordance and shows `ns-resize`. Quantity / label /
-  `✕` / `✓` still behave as buttons: click (no movement) → edit / action; drag
-  (movement beyond the threshold) → move the price. No pointer-down side
-  effects before the gesture is resolved.
-- The line itself uses the same ±2 CSS px band as alerts for drag.
-- **5rem** between the price-scale / y-axis edge and the order controls (right
-  edge of the control group is 5rem from the pane's right edge). Resolve `rem`
-  from the document root: `parseFloat(getComputedStyle(document.documentElement).fontSize)`
-  (80 CSS px at 16px). Replaces the 8px margin.
-- Info box = **quantity**, vertical **separator**, **label** (order type).
-- Text and borders use the line `color`; backgrounds are the **chart
-  background**, never a solid red/green fill.
-- Every multi-part control has chart-background fill and a visible border, and
-  must **mask the dashed line beneath it**.
-- Cancel uses the literal `✕` glyph, not `x` or `×`.
-- Image 2's pointed right tag edge and end dot: optional style cues, adopt only
-  if cheap and record the decision here.
-
-### 7. Styling options passed by the host `[ ]`
-
-No hard-coded colours or fonts. Constructor options (static, no theme switching):
-
-```ts
-new InteractivePriceLines(container, {
-  backgroundColor: '#040506',   // chart background, also given to createChart
-  fontFamily: '...',            // host --sans, resolved
-  borderRadius: 6,              // host --radius-sm, in CSS px
-});
-```
-
-- All values are plain resolved strings/numbers. Canvas cannot evaluate
-  `var(--x)`, so the host resolves tokens with
-  `getComputedStyle(document.documentElement).getPropertyValue('--green').trim()`.
-  Colours may use modern syntax such as `rgb(30 255 178)`; the plugin must treat
-  them as opaque strings and never parse or concatenate alpha onto them.
-- Remove all hard-coded fills (`#101014`, `#A71D31`, `#3C4048`, `#089981`,
-  `#FFFFFF`) and the hard-coded font.
-- Optional fallback only: derive the background from
-  `chart.options().layout.background` when `ColorType.Solid`; explicit option
-  wins.
-
-### 8. Tests `[ ]`
-
-No tests exist yet. Create them from scratch in this package, in
-`tests/interactions` and `tests/graphics`. Minimum coverage: alert band hit
-area, hover reveal of alert `✕`, centred alert control, empty quantity segment,
-5rem offset, click-vs-drag threshold, grip / `✕` / `✓` / segment hit areas,
-`✕` / `✓` visibility rules (unconfirmed vs confirmed), `lineType` immutability,
-context-menu payload, drag restoring host scroll/scale options. Decide the test
-runner with the user when this item starts (the repo's other plugins have no
-usable reference yet).
+- Item 8 (tests), see above.
+- Visual review of the demo against images 1 and 2.
+- Known limitation (unchanged from v1.0): pointer coordinates are relative to
+  the chart container and assume the pane starts at x = 0 (no left price scale).
 
 ## Host design tokens (demo must mirror these)
 
@@ -362,7 +253,7 @@ the user if anything should differ, there is no blue token):
 | Use | Token |
 | --- | --- |
 | chart `backgroundColor` / `layout.background` | `--bg-0` |
-| label / quantity text on controls | line colour (text uses the line colour, not `--text-primary`) |
+| quantity / label text on controls | fixed `#fff` (plugin constant; icons, borders and separator use the line colour) |
 | `DEMO_COLORS.alert` | `--yellow` |
 | `DEMO_COLORS.buy` | `--green` |
 | `DEMO_COLORS.sell` (stop loss) | `--red` |
@@ -388,41 +279,29 @@ This differs from the user's earlier fixtures (cancel-only, no `confirmed`) on
 purpose so the demo exercises both visibility states and the empty-quantity
 segment (`sell-trailing-stop`). Adjust if the user objects.
 
-The demo should also: create the chart with `layout.background` = the same
-background passed to the plugin; subscribe to `contextMenuRequested()` and show
-a minimal host-owned menu (set target price, change colour, remove); on
-`actionClicked` with `confirm`, simulate the host commit and call
-`updateLine(id, { confirmed: true })`; on `cancel`, call `removeLine`; keep the
-host-owned HTML editor flow for quantity / label edits.
+The demo (implemented in v1.1) creates the chart with `layout.background` =
+the same background passed to the plugin; shows a minimal host-owned context
+menu (set target price, change colour, remove; on empty chart: add alert at the
+clicked price); on `confirm` simulates the host commit via
+`updateLine(id, { confirmed: true })`; on `cancel` calls `removeLine`; and keeps
+the host-owned HTML editor for quantity / label edits.
 
 ## Important implementation notes
 
-- `lineRects()` is the single geometry source shared by canvas drawing and
+- `layoutLine()` is the single geometry source shared by canvas drawing and
   `hitTest` / `_hitAt`; keep it that way so painted controls and pointer
-  regions cannot drift apart. The line band, hover state and control
-  visibility must also come from shared geometry/state.
+  regions cannot drift apart. Hover state and control visibility are inputs to
+  it, never recomputed elsewhere.
 - `priceToCoordinate()` can return `null`; never draw or hit-test such a line.
 - Use device-pixel-ratio-aware `fancy-canvas` drawing
-  (`useBitmapCoordinateSpace`) as the current renderer does. Keep 1px borders
-  crisp (round to bitmap pixels, `+0.5` for odd widths).
-- Masking: fill each control rect with the background colour *before* stroking
-  its border and drawing text, on the same top-order layer as the line, so the
-  line is hidden underneath. Check the canvas dashed line vs the native price
-  line created by `addLine` are not visibly doubled.
-- Gesture model (drag vs click) replaces the v1.0 pointer-down actions:
-  pointer-down arms, pointer-move past the threshold starts the drag (then
-  disable scroll/scale and `setPointerCapture`), pointer-up without drag fires
-  the click action. Restore host `handleScroll` / `handleScale` on up/cancel
-  exactly as v1.0 does.
-- Canvas hit testing returns stable external IDs in the form
-  `interactive-price-lines:<id>:<area>`. New areas (`grip`, `cancel`,
-  `confirm`, `quantity`, `label`, `line`) to be listed here when final.
+  (`useBitmapCoordinateSpace`). Borders are stroked inset by half an integer
+  line width on snapped bitmap rects so they stay crisp.
 - Do not use a custom series. This remains a series primitive associated with
   the series whose price scale the levels use.
-- Text widths are estimated in v1.0 (`length * 7.2 + 16`); prefer
-  `ctx.measureText` with the host font so boxes fit, including `✕` / `✓`.
 - `lineType` drives behaviour: `alert` → whole-line drag, centred hover `✕`, no
   labels; `order` → full control group.
+- Layout constants (row height 22, grip 18, gaps, min widths, 4px threshold,
+  ±2px band, 5rem offset) are at the top of the source file.
 
 ## Repository state caution
 
