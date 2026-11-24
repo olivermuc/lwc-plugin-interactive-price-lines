@@ -9,8 +9,8 @@ This document is the current product and engineering handoff. **Read it fully
 before making the next change.** Together with the source zip it must always be
 enough to start a fresh chat and continue the work.
 
-- **Last released plugin version: v1.5** (see "Current implementation").
-- **Next target: v1.6**: the open items under "Open items" (tests, plus the points to confirm).
+- **Last released plugin version: v1.6** (see "Current implementation").
+- **Next target: v1.7**: the open items under "Open items" (tests, plus the points to confirm).
 
 ## GENERAL project notes (workflow rules, MUST follow)
 
@@ -66,7 +66,7 @@ pnpm --filter @tradingview/lwc-plugin-interactive-price-lines dev --host 127.0.0
 Dependencies: peer `lightweight-charts ^5.0.0`, `fancy-canvas ~2.1.0`,
 workspace `@tradingview/lwc-toolkit` (`Delegate`, `PluginBase`).
 
-## Current implementation (v1.5)
+## Current implementation (v1.6)
 
 `InteractivePriceLines` is a series primitive attached with:
 
@@ -93,7 +93,7 @@ Public methods:
   if not attached.
 - `updateLine(id, patch)` patches `price`, `colorPriceLine`, `colorInfoBoxBorder`, `fontColor`, `fontSize`,
   `fontWeightLabel`, `fontWeightValues`, `infoBoxLineWidth`, `infoBoxPaddingH`, `infoBoxPaddingV`,
-  `priceLineWidth`, `backgroundColor`
+  `priceLineWidth`, `lineDash`, `backgroundColor`
   (`''` = back to the plugin / chart background), `icon`, `iconFontWeight`, `iconColor`, `iconBackground`, `iconPaddingH`, `iconPaddingV`,
   `iconPosition`, `iconSize`, `iconOffset`, `showOrderValue`, `showHoldingValueColor`,
   `quantity`, `label`, `actions`, `confirmed`, `extraData` (replaced as a whole). `lineType` is immutable (not in the patch type; a
@@ -114,11 +114,21 @@ Types: `InteractivePriceLineAction = 'cancel' | 'confirm'`,
 `InteractivePriceLineField = 'quantity' | 'label'`,
 `InteractivePriceLineType = 'alert' | 'order' | 'holding' | 'temporary'`,
 `InteractivePriceLineFontWeight = number | 'normal' | 'bold' | 'bolder' | 'lighter'`,
-`InteractivePriceLineOptions { id, price, lineType?='order', colorPriceLine?, colorInfoBoxBorder?, fontColor?, fontSize?=12, fontWeightLabel?='normal', fontWeightValues?='normal', infoBoxLineWidth?=1, infoBoxPaddingH?=8, infoBoxPaddingV?=5, priceLineWidth?=1, backgroundColor?, icon?='', iconFontWeight?='normal', iconColor?, iconBackground?, iconPaddingH?=0, iconPaddingV?=0, iconPosition?='middle', iconSize?=20, iconOffset?=20, showOrderValue?=false, showHoldingValueColor?=false, quantity?, label?, actions?, confirmed?=false, extraData? }`,
+`InteractivePriceLineOptions { id, price, lineType?='order', colorPriceLine?, colorInfoBoxBorder?, fontColor?, fontSize?=12, fontWeightLabel?='normal', fontWeightValues?='normal', infoBoxLineWidth?=1, infoBoxPaddingH?=8, infoBoxPaddingV?=5, priceLineWidth?=1, lineDash?, backgroundColor?, icon?='', iconFontWeight?='normal', iconColor?, iconBackground?, iconPaddingH?=0, iconPaddingV?=0, iconPosition?='middle', iconSize?=20, iconOffset?=20, showOrderValue?=false, showHoldingValueColor?=false, quantity?, label?, actions?, confirmed?=false, extraData? }`,
 `InteractivePriceLineDragStart { line }`,
 `InteractivePriceLineExtraData { holdingAmount?, holdingAbsGain?, holdingRelGain? }` (`string | number`, drawn as passed),
 `InteractivePriceLinesOptions { backgroundColor?, fontFamily?, borderRadius? }`.
 The returned `InteractivePriceLine` carries the **resolved** colors, icon settings, `fontSize` and styling values (`backgroundColor` is as passed, `undefined` = plugin / chart background).
+
+### v1.6 additions
+
+- **Icon alignment:** `above` and `below` backdrops overlap the price line by
+  half of `priceLineWidth`, covering the full stroke.
+- **`lineDash`** (CSS px): optional custom dash lengths separated by spaces or
+  commas, e.g. `'10 4 2 4'` or `'10, 4, 2, 4'`. An empty string draws a solid
+  line. If omitted, defaults remain dash-dot for orders and temporary lines,
+  dashed for alerts, and dotted for holdings. Can be changed with `updateLine`;
+  setting it to `undefined` restores the line-type default.
 
 ### v1.5 additions
 
@@ -133,7 +143,7 @@ The returned `InteractivePriceLine` carries the **resolved** colors, icon settin
   under "Verification so far".
 - **`dragStarted()`**: fires once per drag, when the press passes the 4px threshold
   and *before* the line moves (`line.price` is the price before the drag).
-- **`lineType: 'temporary'`**: a solid line, no box, no controls, no end dot,
+- **`lineType: 'temporary'`**: a dash-dot line by default, no box, no controls, no end dot,
   not hit-testable, no hover, no drag, no context-menu payload, never reported in
   events. Created with `addLine`, moved with `updateLine({ price })`, removed with
   `removeLine`: host only. Styling (`colorPriceLine`, `priceLineWidth`, `icon*`) applies;
@@ -162,8 +172,9 @@ The returned `InteractivePriceLine` carries the **resolved** colors, icon settin
   (defaults to `normal`; same validated values as `fontWeightValues`), `iconSize`
   CSS px (default 20), right-aligned
   with `iconOffset` CSS px (default 20) from the pane edge. `iconPosition` is
-  `middle` (default), `above` or `below`; above / below align the padded backdrop
-  edge with the price line. `iconPaddingH` and `iconPaddingV` add CSS px around
+  `middle` (default), `above` or `below`; above / below overlap the price line
+  by half its `priceLineWidth`, covering the full stroke. `iconPaddingH` and
+  `iconPaddingV` add CSS px around
   the backdrop (both default 0). Not interactive (the line band underneath still
   drags).
 - **Quantity hit area check:** for an order with `quantity: ''` the quantity segment
@@ -173,7 +184,7 @@ The returned `InteractivePriceLine` carries the **resolved** colors, icon settin
   that has orders without quantity (e.g. trailing stop) must ignore
   `field: 'quantity'` itself. Alerts / holdings have no quantity segment at all.
 
-### Rendering / geometry (v1.3)
+### Rendering / geometry (v1.6)
 
 `layoutLine()` is the single geometry source for drawing and hit testing (CSS
 px, pane coordinates). Hidden controls have no rect: not painted, not
@@ -192,17 +203,18 @@ hit-testable.
   5px at the base font size and scales with `fontSize`; this preserves the
   existing default box height. Only an *empty* segment gets a minimum width
   (quantity 28, label 22).
-- **Order** (default): dash-dot line + end dot; right edge of the info box is
+- **Order** (default): dash-dot line + end dot (customizable with `lineDash`);
+  right edge of the info box is
   **5rem** from the pane's right edge. Left to right:
   `[ ✕ disk ][ ✓ disk ][ grip | quantity | label ]`. The grip (18px, dots) is
   drag-only. The info box never moves when `✕` / `✓` appear or disappear. The
   quantity segment is always present.
-- **Alert:** dashed line, `label | ✕` box (no grip, no quantity, no outside
+- **Alert:** dashed line (customizable with `lineDash`), `label | ✕` box (no grip, no quantity, no outside
   buttons) centred horizontally in the pane and vertically on the line, shown
   **only while the line is hovered / pressed**. The label segment is a
   drag-only area (no edit request); the `✕` segment needs `'cancel'` in
   `actions`, otherwise the box is label only.
-- **Holding:** dotted line, no end dot, static box
+- **Holding:** dotted line (customizable with `lineDash`), no end dot, static box
   `label: holdingAmount | holdingAbsGain | holdingRelGain`, e.g.
   `Owned: 123 | +123,12 | +13,12 %` (label defaults to `Owned`; values come from
   `extraData`; without an amount the first segment is just the label; absent /
@@ -299,14 +311,14 @@ provide an accessible editable input by themselves.
 | Info box margins | v1.2: every text has 8px left / right; empty segments get a minimum width. The order grip stays (user likes it) |
 | Alert style | v1.3: centred `label \| ✕` box (label default `Alert` set by host), no grip / quantity, hover only, no outside buttons. Trashcan dropped |
 | Holding | v1.3: static line, box `Owned: amount \| abs gain \| rel gain` from `extraData` (v1.4: amount joined to the label with `: `), host formats and updates the values |
-| Temporary line | v1.5: `lineType: 'temporary'`, plain solid line, host-only set / unset, no interaction, styling applies, axis label kept |
+| Temporary line | v1.5: `lineType: 'temporary'`, dash-dot line by default, host-only set / unset, no interaction, styling applies, axis label kept |
 | Order value | v1.5: `showOrderValue`, orders only, `+/-0,00 %` vs last price of the series, inside the label segment, live while dragging |
 | Units | `iconSize`, `iconOffset`, and icon padding are **CSS px** (like `fontSize`) |
 | Line widths | v1.5: `infoBoxLineWidth` = box border + separators only; `priceLineWidth` = the line |
 | Context menu | Right click anywhere on the chart: `preventDefault()` + `contextMenuRequested` event to the host, which owns the menu |
 | Tests | Do not exist yet; create `tests/interactions` and `tests/graphics` from scratch (runner to be decided with the user) |
 
-## Checklist (v1.5)
+## Checklist (v1.6)
 
 Status legend: `[ ]` open, `[x]` done. Update this list every drop.
 
@@ -341,6 +353,8 @@ Status legend: `[ ]` open, `[x]` done. Update this list every drop.
 22. per-line `backgroundColor` `[x]`
 23. `icon`, `iconSize`, `iconOffset` `[x]`
 24. Check: empty `quantity` hit area `[x]` (not zero width; 28px, by design)
+25. `lineDash` custom patterns and per-line-type defaults `[x]`
+26. `above` / `below` icon backdrop alignment includes `priceLineWidth` `[x]`
 
 ## Open items
 

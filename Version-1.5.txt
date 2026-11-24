@@ -1,2 +1,0 @@
-v1.5
-v1.5: Fix dead pan/click after drag (live options snapshot), add dragStarted, temporary line, showOrderValue, font weights, line widths, per-line background and icon options

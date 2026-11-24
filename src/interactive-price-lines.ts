@@ -22,7 +22,7 @@ export type InteractivePriceLineIconPosition = 'middle' | 'above' | 'below';
  * - `order`: draggable, `grip | quantity | label` box, outside `✕` / `✓` buttons.
  * - `alert`: draggable, centred `label | ✕` box (on hover), no quantity, no grip, no outside buttons.
  * - `holding`: static line with an `Owned | amount | abs gain | rel gain` box. No drag, no controls, no events.
- * - `temporary`: a plain solid line without any controls, box or events. Set (`addLine`) and unset
+ * - `temporary`: a dash-dot line without any controls, box or events. Set (`addLine`) and unset
  *   (`removeLine`) only programmatically, to be used as a temporary placeholder. Styling options apply.
  */
 export type InteractivePriceLineType = 'alert' | 'order' | 'holding' | 'temporary';
@@ -75,6 +75,8 @@ export interface InteractivePriceLineOptions {
   infoBoxPaddingV?: number;
   /** Width of the price line in CSS px. Default 1. */
   priceLineWidth?: number;
+  /** Custom dash lengths in CSS px, separated by spaces or commas. Empty string draws a solid line. */
+  lineDash?: string;
   /** Fill of the label & data box, the buttons and the icon backdrop. Default: the plugin / chart background. */
   backgroundColor?: string;
   /** An emoji or character drawn on the right side of the price line. Default: none. */
@@ -89,7 +91,7 @@ export interface InteractivePriceLineOptions {
   iconPaddingH?: number;
   /** Vertical padding around the icon backdrop, in CSS px. Default 0. */
   iconPaddingV?: number;
-  /** Position relative to the price line; `above` and `below` align the backdrop edge to the line. Default `middle`. */
+  /** Position relative to the price line; `above`/`below` overlap its outer stroke edge by half the line width. Default `middle`. */
   iconPosition?: InteractivePriceLineIconPosition;
   /** Icon size in CSS px. Default 20. */
   iconSize?: number;
@@ -137,6 +139,7 @@ export interface InteractivePriceLine {
   infoBoxPaddingH: number;
   infoBoxPaddingV: number;
   priceLineWidth: number;
+  lineDash: string | undefined;
   /** As passed; `undefined` = the plugin / chart background. */
   backgroundColor: string | undefined;
   icon: string;
@@ -274,7 +277,7 @@ const MIN_LABEL_WIDTH = 22;
 /** Gap between the pane's right edge (price scale) and the order / holding boxes. */
 const RIGHT_OFFSET_REM = 5;
 /** The line is draggable within this many CSS px above and below it. */
-const LINE_HIT_TOLERANCE = 2;
+const LINE_HIT_TOLERANCE = 3;
 /** A press that moves less than this many CSS px is a click, otherwise a price drag. */
 const DRAG_THRESHOLD = 4;
 const END_DOT_RADIUS = 3;
@@ -290,6 +293,12 @@ const DEFAULT_RADIUS = 6;
 const ID_PREFIX = 'interactive-price-lines';
 const DEFAULT_FONT_WEIGHT: InteractivePriceLineFontWeight = 'normal';
 const DEFAULT_LINE_WIDTH = 1;
+const DEFAULT_LINE_DASH: Record<InteractivePriceLineType, readonly number[]> = {
+  order: [10, 4, 2, 4],
+  alert: [6, 4],
+  holding: [2, 3],
+  temporary: [10, 4, 2, 4],
+};
 const DEFAULT_ICON_SIZE = 20;
 const DEFAULT_ICON_OFFSET = 20;
 const FONT_WEIGHT_KEYWORDS = ['normal', 'bold', 'bolder', 'lighter'];
@@ -326,6 +335,27 @@ function checkNumber(name: string, value: number, allowZero: boolean): number {
     throw new Error(`InteractivePriceLines: \`${name}\` must be a ${allowZero ? 'non-negative' : 'positive'} number`);
   }
   return value;
+}
+
+function checkLineDash(lineDash: string | undefined): string | undefined {
+  if (lineDash === undefined || lineDash.trim() === '') return lineDash;
+  lineDashValues(lineDash);
+  return lineDash;
+}
+
+function lineDashValues(lineDash: string): number[] {
+  const parts = lineDash.trim().split(/(?:\s*,\s*|\s+)/);
+  const values = parts.map(Number);
+  if (parts.some((part, index) => part === '' || !Number.isFinite(values[index]) || values[index] < 0)) {
+    throw new Error('InteractivePriceLines: `lineDash` must contain non-negative numbers separated by spaces or commas');
+  }
+  return values;
+}
+
+function lineDashPattern(line: InteractivePriceLine): readonly number[] {
+  if (line.lineDash === undefined) return DEFAULT_LINE_DASH[line.lineType];
+  if (line.lineDash.trim() === '') return [];
+  return lineDashValues(line.lineDash);
 }
 
 function checkFontWeight(name: string, weight: InteractivePriceLineFontWeight): InteractivePriceLineFontWeight {
@@ -396,8 +426,9 @@ function layoutLine(line: InteractivePriceLine, y: number, paneWidth: number, m:
   const backgroundWidth = glyphWidth + line.iconPaddingH * 2;
   const backgroundHeight = line.iconSize + line.iconPaddingV * 2;
   const backgroundLeft = paneWidth - line.iconOffset - backgroundWidth;
-  const backgroundTop = line.iconPosition === 'above' ? y - backgroundHeight
-    : line.iconPosition === 'below' ? y
+  const halfLineWidth = line.priceLineWidth / 2;
+  const backgroundTop = line.iconPosition === 'above' ? y + halfLineWidth - backgroundHeight
+    : line.iconPosition === 'below' ? y - halfLineWidth
       : y - backgroundHeight / 2;
   return {
     ...layout,
@@ -587,12 +618,7 @@ class LinesRenderer implements IPrimitivePaneRenderer {
         const width = bitmapWidth(line.priceLineWidth);
         const yy = Math.round(layout.y * v - width / 2) + width / 2;
         ctx.strokeStyle = line.colorPriceLine; ctx.fillStyle = line.colorPriceLine; ctx.lineWidth = width;
-        ctx.setLineDash(
-          line.lineType === 'temporary' ? [10 * h, 4 * h, 2 * h, 4 * h]
-            : line.lineType === 'alert' ? [6 * h, 4 * h]
-              : line.lineType === 'holding' ? [2 * h, 3 * h]
-                : [10 * h, 4 * h, 2 * h, 4 * h]
-        );
+        ctx.setLineDash(lineDashPattern(line).map(length => length * h));
         ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(this._paneWidth * h, yy); ctx.stroke();
         ctx.setLineDash([]);
         if (line.lineType === 'order') {
@@ -717,6 +743,7 @@ export class InteractivePriceLines extends PluginBase {
       infoBoxPaddingH: checkNumber('infoBoxPaddingH', options.infoBoxPaddingH ?? DEFAULT_INFO_BOX_PADDING_H, true),
       infoBoxPaddingV: checkNumber('infoBoxPaddingV', options.infoBoxPaddingV ?? DEFAULT_INFO_BOX_PADDING_V, true),
       priceLineWidth: checkNumber('priceLineWidth', options.priceLineWidth ?? DEFAULT_LINE_WIDTH, false),
+      lineDash: checkLineDash(options.lineDash),
       backgroundColor: options.backgroundColor === '' ? undefined : options.backgroundColor,
       icon: options.icon ?? '',
       iconFontWeight: checkFontWeight('iconFontWeight', options.iconFontWeight ?? DEFAULT_FONT_WEIGHT),
@@ -751,6 +778,7 @@ export class InteractivePriceLines extends PluginBase {
     if (patch.infoBoxPaddingH !== undefined) checkNumber('infoBoxPaddingH', patch.infoBoxPaddingH, true);
     if (patch.infoBoxPaddingV !== undefined) checkNumber('infoBoxPaddingV', patch.infoBoxPaddingV, true);
     if (patch.priceLineWidth !== undefined) checkNumber('priceLineWidth', patch.priceLineWidth, false);
+    if ('lineDash' in patch) checkLineDash(patch.lineDash);
     if (patch.iconSize !== undefined) checkNumber('iconSize', patch.iconSize, false);
     if (patch.iconOffset !== undefined) checkNumber('iconOffset', patch.iconOffset, true);
     if (patch.iconPaddingH !== undefined) checkNumber('iconPaddingH', patch.iconPaddingH, true);
@@ -777,6 +805,7 @@ export class InteractivePriceLines extends PluginBase {
     if (patch.infoBoxPaddingH !== undefined) line.infoBoxPaddingH = patch.infoBoxPaddingH;
     if (patch.infoBoxPaddingV !== undefined) line.infoBoxPaddingV = patch.infoBoxPaddingV;
     if (patch.priceLineWidth !== undefined) line.priceLineWidth = patch.priceLineWidth;
+    if ('lineDash' in patch) line.lineDash = patch.lineDash;
     if (patch.backgroundColor !== undefined) line.backgroundColor = patch.backgroundColor === '' ? undefined : patch.backgroundColor; // '' = back to the plugin / chart background
     if (patch.icon !== undefined) line.icon = patch.icon;
     if (patch.iconColor !== undefined) { line.iconColor = patch.iconColor; line.iconColorOption = patch.iconColor; }
@@ -1046,11 +1075,11 @@ export class InteractivePriceLines extends PluginBase {
 
   private _publicLine(line: StoredLine): InteractivePriceLine {
     const { id, price, lineType, colorPriceLine, colorInfoBoxBorder, fontSize, quantity, label, actions, confirmed } = line;
-    const { fontWeightLabel, fontWeightValues, infoBoxLineWidth, infoBoxPaddingH, infoBoxPaddingV, priceLineWidth, backgroundColor, icon, iconFontWeight, iconColor, iconBackground, iconPaddingH, iconPaddingV, iconPosition, iconSize, iconOffset, showOrderValue, showHoldingValueColor } = line;
+    const { fontWeightLabel, fontWeightValues, infoBoxLineWidth, infoBoxPaddingH, infoBoxPaddingV, priceLineWidth, lineDash, backgroundColor, icon, iconFontWeight, iconColor, iconBackground, iconPaddingH, iconPaddingV, iconPosition, iconSize, iconOffset, showOrderValue, showHoldingValueColor } = line;
     return {
       id, price, lineType, colorPriceLine, colorInfoBoxBorder,
       fontColor: line.fontColorOption ?? line.colorPriceLineOption ?? TEXT_COLOR, fontSize,
-      fontWeightLabel, fontWeightValues, infoBoxLineWidth, infoBoxPaddingH, infoBoxPaddingV, priceLineWidth, backgroundColor,
+      fontWeightLabel, fontWeightValues, infoBoxLineWidth, infoBoxPaddingH, infoBoxPaddingV, priceLineWidth, lineDash, backgroundColor,
       icon, iconFontWeight, iconColor, iconBackground, iconPaddingH, iconPaddingV, iconPosition, iconSize, iconOffset, showOrderValue, showHoldingValueColor,
       quantity, label, actions, confirmed, extraData: { ...line.extraData },
     };

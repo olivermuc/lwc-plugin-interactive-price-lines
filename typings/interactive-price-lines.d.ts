@@ -9,7 +9,7 @@ export type InteractivePriceLineIconPosition = 'middle' | 'above' | 'below';
  * - `order`: draggable, `grip | quantity | label` box, outside `✕` / `✓` buttons.
  * - `alert`: draggable, centred `label | ✕` box (on hover), no quantity, no grip, no outside buttons.
  * - `holding`: static line with an `Owned | amount | abs gain | rel gain` box. No drag, no controls, no events.
- * - `temporary`: a plain solid line without any controls, box or events. Set (`addLine`) and unset
+ * - `temporary`: a dash-dot line without any controls, box or events. Set (`addLine`) and unset
  *   (`removeLine`) only programmatically, to be used as a temporary placeholder. Styling options apply.
  */
 export type InteractivePriceLineType = 'alert' | 'order' | 'holding' | 'temporary';
@@ -59,6 +59,8 @@ export interface InteractivePriceLineOptions {
     infoBoxPaddingV?: number;
     /** Width of the price line in CSS px. Default 1. */
     priceLineWidth?: number;
+    /** Custom dash lengths in CSS px, separated by spaces or commas. Empty string draws a solid line. */
+    lineDash?: string;
     /** Fill of the label & data box, the buttons and the icon backdrop. Default: the plugin / chart background. */
     backgroundColor?: string;
     /** An emoji or character drawn on the right side of the price line. Default: none. */
@@ -73,7 +75,7 @@ export interface InteractivePriceLineOptions {
     iconPaddingH?: number;
     /** Vertical padding around the icon backdrop, in CSS px. Default 0. */
     iconPaddingV?: number;
-    /** Position relative to the price line; `above` and `below` align the backdrop edge to the line. Default `middle`. */
+    /** Position relative to the price line; `above`/`below` overlap its outer stroke edge by half the line width. Default `middle`. */
     iconPosition?: InteractivePriceLineIconPosition;
     /** Icon size in CSS px. Default 20. */
     iconSize?: number;
@@ -119,6 +121,7 @@ export interface InteractivePriceLine {
     infoBoxPaddingH: number;
     infoBoxPaddingV: number;
     priceLineWidth: number;
+    lineDash: string | undefined;
     /** As passed; `undefined` = the plugin / chart background. */
     backgroundColor: string | undefined;
     icon: string;
