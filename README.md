@@ -9,8 +9,8 @@ This document is the current product and engineering handoff. **Read it fully
 before making the next change.** Together with the source zip it must always be
 enough to start a fresh chat and continue the work.
 
-- **Last released plugin version: v1.4** (see "Current implementation").
-- **Next target: v1.5**: the open items under "Open items" (tests, plus the points to confirm).
+- **Last released plugin version: v1.5** (see "Current implementation").
+- **Next target: v1.6**: the open items under "Open items" (tests, plus the points to confirm).
 
 ## GENERAL project notes (workflow rules, MUST follow)
 
@@ -44,13 +44,13 @@ version constant in the source.
   (v1.1 → `"version": "1.1.0"`).
 - Keep `Version-X.Y.txt` in sync on every drop: rename/replace it so the file
   name and its content match the new version (content: `vX.Y` plus the commit
-  message line). Done in v1.3 (`Version-1.4.txt`, `package.json` `1.4.0`).
+  message line). Done in v1.3 (`Version-1.5.txt`, `package.json` `1.5.0`).
 
 ## Repository and package
 
 - Repository: `/Users/oliver/Code/lightweight-charts`
 - Package: `packages/lwc-plugin-interactive-price-lines`
-- Entry point: `src/interactive-price-lines.ts` (~620 lines, single file)
+- Entry point: `src/interactive-price-lines.ts` (~900 lines, single file)
 - Demo: `src/example/example.ts` + `src/example/index.html`
 - Reference implementation: `packages/lwc-plugin-user-price-lines`
 - Interaction reference: the official `lwc-plugin-brushable-area-series`
@@ -66,7 +66,7 @@ pnpm --filter @tradingview/lwc-plugin-interactive-price-lines dev --host 127.0.0
 Dependencies: peer `lightweight-charts ^5.0.0`, `fancy-canvas ~2.1.0`,
 workspace `@tradingview/lwc-toolkit` (`Delegate`, `PluginBase`).
 
-## Current implementation (v1.4)
+## Current implementation (v1.5)
 
 `InteractivePriceLines` is a series primitive attached with:
 
@@ -91,27 +91,87 @@ Public methods:
   native line only supplies the axis label; the canvas draws the visible line
   (so controls can mask it and it is never doubled). Throws on duplicate id or
   if not attached.
-- `updateLine(id, patch)` patches `price`, `color`, `fontColor`, `fontSize`,
+- `updateLine(id, patch)` patches `price`, `colorPriceLine`, `colorInfoBoxBorder`, `fontColor`, `fontSize`,
+  `fontWeightLabel`, `fontWeightValues`, `infoBoxLineWidth`, `infoBoxPaddingH`, `infoBoxPaddingV`,
+  `priceLineWidth`, `backgroundColor`
+  (`''` = back to the plugin / chart background), `icon`, `iconFontWeight`, `iconColor`, `iconBackground`, `iconPaddingH`, `iconPaddingV`,
+  `iconPosition`, `iconSize`, `iconOffset`, `showOrderValue`, `showHoldingValueColor`,
   `quantity`, `label`, `actions`, `confirmed`, `extraData` (replaced as a whole). `lineType` is immutable (not in the patch type; a
-  runtime `lineType` key throws). Throws on unknown id.
+  runtime `lineType` key throws). Throws on unknown id; an invalid value throws **before** anything is changed.
 - `removeLine(id)`, `lines()`.
-- `editRequested()`, `actionClicked()`, `priceChanged()`,
+- `editRequested()`, `actionClicked()`, `priceChanged()`, `dragStarted()`,
   `contextMenuRequested()` return toolkit subscriptions.
 
 ```ts
 lines.editRequested().subscribe(({ line, field, anchor }) => { /* host editor at anchor (viewport px); commit via updateLine */ });
 lines.actionClicked().subscribe(({ line, action }) => { /* 'cancel' → removeLine; 'confirm' → commit, then updateLine(id, { confirmed: true }) */ });
+lines.dragStarted().subscribe(({ line }) => { /* once per drag, when the press passes the 4px threshold; line.price is still the old price */ });
 lines.priceChanged().subscribe(({ line, previousPrice }) => { /* fired on release with the final drag price */ });
 lines.contextMenuRequested().subscribe(({ price, line, clientX, clientY }) => { /* host opens its own menu */ });
 ```
 
 Types: `InteractivePriceLineAction = 'cancel' | 'confirm'`,
 `InteractivePriceLineField = 'quantity' | 'label'`,
-`InteractivePriceLineType = 'alert' | 'order' | 'holding'`,
-`InteractivePriceLineOptions { id, price, lineType?='order', color?, fontColor?, fontSize?=12, quantity?, label?, actions?, confirmed?=false, extraData? }`,
+`InteractivePriceLineType = 'alert' | 'order' | 'holding' | 'temporary'`,
+`InteractivePriceLineFontWeight = number | 'normal' | 'bold' | 'bolder' | 'lighter'`,
+`InteractivePriceLineOptions { id, price, lineType?='order', colorPriceLine?, colorInfoBoxBorder?, fontColor?, fontSize?=12, fontWeightLabel?='normal', fontWeightValues?='normal', infoBoxLineWidth?=1, infoBoxPaddingH?=8, infoBoxPaddingV?=5, priceLineWidth?=1, backgroundColor?, icon?='', iconFontWeight?='normal', iconColor?, iconBackground?, iconPaddingH?=0, iconPaddingV?=0, iconPosition?='middle', iconSize?=20, iconOffset?=20, showOrderValue?=false, showHoldingValueColor?=false, quantity?, label?, actions?, confirmed?=false, extraData? }`,
+`InteractivePriceLineDragStart { line }`,
 `InteractivePriceLineExtraData { holdingAmount?, holdingAbsGain?, holdingRelGain? }` (`string | number`, drawn as passed),
 `InteractivePriceLinesOptions { backgroundColor?, fontFamily?, borderRadius? }`.
-The returned `InteractivePriceLine` carries the **resolved** `fontColor` and `fontSize`.
+The returned `InteractivePriceLine` carries the **resolved** colors, icon settings, `fontSize` and styling values (`backgroundColor` is as passed, `undefined` = plugin / chart background).
+
+### v1.5 additions
+
+- **Bug fix, scroll / pan / click dead after a drag (or click on a control):**
+  `chart.options()` returns the chart's **live** options object and `applyOptions`
+  merges into it in place, so the `handleScroll` / `handleScale` values "saved" at
+  press were overwritten by the `false` lock and then "restored" as `false`. They
+  are now deep-copied (`structuredClone`) at press. Hardening: only the primary
+  pointer starts a gesture; a stale gesture (lost `pointerup`) is ended by the
+  next press or by a mouse move with no button down, so the locks can never stay
+  on. The reproduction (fake chart with live `options()`) and the fix are described
+  under "Verification so far".
+- **`dragStarted()`**: fires once per drag, when the press passes the 4px threshold
+  and *before* the line moves (`line.price` is the price before the drag).
+- **`lineType: 'temporary'`**: a solid line, no box, no controls, no end dot,
+  not hit-testable, no hover, no drag, no context-menu payload, never reported in
+  events. Created with `addLine`, moved with `updateLine({ price })`, removed with
+  `removeLine`: host only. Styling (`colorPriceLine`, `priceLineWidth`, `icon*`) applies;
+  it keeps the native axis label with its price.
+- **`showOrderValue`** (orders only): `% = (line price - last price) / |last price| * 100`,
+  2 decimals, German format, explicit `+` for gains, e.g. `Stop Loss -2,23 %`,
+  appended to the label *inside the label segment* (so the segment, and with it the
+  box, grows). "Last price" = `close` (OHLC) or `value` of the last bar of the
+  series (`dataByIndex`, `series.data()` as fallback); nothing is shown while there
+  is none (or it is 0). It is computed from `line.price` on every paint, so it
+  updates live while dragging and when the series updates.
+- **`fontWeightLabel` / `fontWeightValues`**: label = order / alert / holding label
+  (holding: the `Owned:` part); values = quantity, order value and the holding
+  amount / gains. A segment is drawn as consecutive *runs* (own weight each),
+  centred as a group; widths are measured per run with the run's weight. Validated
+  (`normal | bold | bolder | lighter | 1..1000`) because the canvas silently drops
+  an invalid `font`.
+- **`infoBoxLineWidth`** (CSS px, `>= 0`, 0 = no border): border and separators of
+  the label & data box (order, alert, holding). The `✕` / `✓` disks keep 1px.
+- **`priceLineWidth`** (CSS px, `> 0`): the line itself; the drag band grows with
+  it (`max(2, width / 2)` px each side).
+- **`backgroundColor`** per line: fill of the box, the `✕` / `✓` disks and (by
+  default) the icon backdrop. `iconBackground` overrides the icon backdrop.
+- **`icon` / `iconSize` / `iconOffset` / `iconPosition`**: a character / emoji,
+  drawn in `iconColor` (defaults to `colorPriceLine`) with `iconFontWeight`
+  (defaults to `normal`; same validated values as `fontWeightValues`), `iconSize`
+  CSS px (default 20), right-aligned
+  with `iconOffset` CSS px (default 20) from the pane edge. `iconPosition` is
+  `middle` (default), `above` or `below`; above / below align the padded backdrop
+  edge with the price line. `iconPaddingH` and `iconPaddingV` add CSS px around
+  the backdrop (both default 0). Not interactive (the line band underneath still
+  drags).
+- **Quantity hit area check:** for an order with `quantity: ''` the quantity segment
+  is **not** zero width: it gets `MIN_QUANTITY_WIDTH` = 28px, is hit-testable
+  (`...:<id>:quantity`) and a click fires `editRequested` with `field: 'quantity'`.
+  This is by design (the empty segment is the place to enter a quantity). A host
+  that has orders without quantity (e.g. trailing stop) must ignore
+  `field: 'quantity'` itself. Alerts / holdings have no quantity segment at all.
 
 ### Rendering / geometry (v1.3)
 
@@ -119,18 +179,19 @@ The returned `InteractivePriceLine` carries the **resolved** `fontColor` and `fo
 px, pane coordinates). Hidden controls have no rect: not painted, not
 hit-testable.
 
-- **Colours (DECIDED):** background (option, else chart solid background, else
-  `#020305`); line colour (`color`, default `#F23645`) for line, borders,
-  separators, grip dots and the `✕` / `✓` icons; **text colour** = `fontColor`,
-  else `color` **if one was passed**, else `TEXT_COLOR` (`#fff`). The fallback
-  is live: `updateLine({ color })` also recolours text without explicit
-  `fontColor`.
+- **Colours:** `colorPriceLine` (default `#F23645`) colours the price line,
+  grip dots, buttons and icon. `colorInfoBoxBorder` colours the info-box border
+  and separators; it defaults to `colorPriceLine` and follows it on update
+  unless explicitly set. **Text colour** = `fontColor`, else an explicitly
+  supplied `colorPriceLine`, else `TEXT_COLOR` (`#fff`).
 - **Font size:** `fontSize` per line (CSS px, default 12, must be > 0 or
-  `addLine` / `updateLine` throw). Row height scales proportionally
+  `addLine` / `updateLine` throw). The base row height scales proportionally
   (`round(fontSize * 22 / 12)`); disks are `rowHeight` wide.
-- **Margins (DECIDED):** every text has `TEXT_PADDING` = 8px on both sides
-  (segment = measured text + 2 × padding). Only an *empty* segment gets a
-  minimum width (quantity 28, label 22).
+- **Info-box padding:** `infoBoxPaddingH` defaults to 8px on each side of the
+  text (segment = measured text + 2 × padding). `infoBoxPaddingV` defaults to
+  5px at the base font size and scales with `fontSize`; this preserves the
+  existing default box height. Only an *empty* segment gets a minimum width
+  (quantity 28, label 22).
 - **Order** (default): dash-dot line + end dot; right edge of the info box is
   **5rem** from the pane's right edge. Left to right:
   `[ ✕ disk ][ ✓ disk ][ grip | quantity | label ]`. The grip (18px, dots) is
@@ -182,6 +243,18 @@ hit-testable.
 
 ### Verification so far
 
+v1.5 (same sandbox limits: stub typings, no real `lightweight-charts`): plugin and
+demo typechecked (`strict`, `noUnusedLocals`); headless Chromium (dpr 2) with a fake
+chart whose `options()` is the live object and whose `applyOptions` merges in place.
+v1.4 reproduced the bug (`handleScroll` all `false` after one drag, no pan after
+it or after a plain click on a line); v1.5 pans before and after both. Also
+checked: `dragStarted` once, after the threshold, before the move; live
+`-11,00 %` / `-16,00 %` while dragging; `Buy Stop +5,00 %`; `temporary` inert (no
+hit, no drag, `line: null` in the context menu); empty quantity = 28px hit area;
+invalid styling values throw; screenshots of weights, widths, background, icons.
+**Not verified:** the real library. That `options()` is live in
+`lightweight-charts@5` is from memory, so confirm the fix in the demo.
+
 v1.1: typechecked against `lightweight-charts@5`, headless smoke test.
 
 v1.2 / v1.3 (cloud sandbox without `lightweight-charts`, `pnpm install` or
@@ -222,14 +295,18 @@ provide an accessible editable input by themselves.
 | `✕` / `✓` visibility | Orders only. Unconfirmed: both always visible. Confirmed: `✓` gone, `✕` only on hover (v1.2 hover-only change **reverted** in v1.3 by the user) |
 | `lineType` | `'alert' \| 'order' \| 'holding'`, **immutable** after `addLine` |
 | Background colour | Passed once to the plugin (or taken from the chart's solid background, else `#020305`); no theme switching |
-| Colours | **No token handling in the plugin.** Background, line/icon colour (`color`), text colour (`fontColor` → `color` → `#fff`) |
+| Colours | **No token handling in the plugin.** Background, price-line/icon colour (`colorPriceLine`), info-box border/separator colour (`colorInfoBoxBorder` → `colorPriceLine`), text colour (`fontColor` → explicit `colorPriceLine` → `#fff`) |
 | Info box margins | v1.2: every text has 8px left / right; empty segments get a minimum width. The order grip stays (user likes it) |
 | Alert style | v1.3: centred `label \| ✕` box (label default `Alert` set by host), no grip / quantity, hover only, no outside buttons. Trashcan dropped |
 | Holding | v1.3: static line, box `Owned: amount \| abs gain \| rel gain` from `extraData` (v1.4: amount joined to the label with `: `), host formats and updates the values |
+| Temporary line | v1.5: `lineType: 'temporary'`, plain solid line, host-only set / unset, no interaction, styling applies, axis label kept |
+| Order value | v1.5: `showOrderValue`, orders only, `+/-0,00 %` vs last price of the series, inside the label segment, live while dragging |
+| Units | `iconSize`, `iconOffset`, and icon padding are **CSS px** (like `fontSize`) |
+| Line widths | v1.5: `infoBoxLineWidth` = box border + separators only; `priceLineWidth` = the line |
 | Context menu | Right click anywhere on the chart: `preventDefault()` + `contextMenuRequested` event to the host, which owns the menu |
 | Tests | Do not exist yet; create `tests/interactions` and `tests/graphics` from scratch (runner to be decided with the user) |
 
-## Checklist (v1.4)
+## Checklist (v1.5)
 
 Status legend: `[ ]` open, `[x]` done. Update this list every drop.
 
@@ -255,6 +332,15 @@ Status legend: `[ ]` open, `[x]` done. Update this list every drop.
 13. Alert box `label | ✕` `[x]`
 14. `extraData` (`holdingAmount`, `holdingAbsGain`, `holdingRelGain`) `[x]`
 15. Holding format `Owned: amount | abs | rel` `[x]`
+16. Bug: scroll / pan / click dead after a drag or after adding a line `[x]` (live `options()` object, see v1.5 additions; confirm in the real demo)
+17. `dragStarted()` event `[x]`
+18. `lineType: 'temporary'` `[x]`
+19. `showOrderValue` `[x]`
+20. `fontWeightLabel`, `fontWeightValues` `[x]`
+21. `infoBoxLineWidth`, `priceLineWidth` `[x]`
+22. per-line `backgroundColor` `[x]`
+23. `icon`, `iconSize`, `iconOffset` `[x]`
+24. Check: empty `quantity` hit area `[x]` (not zero width; 28px, by design)
 
 ## Open items
 
@@ -266,7 +352,14 @@ Status legend: `[ ]` open, `[x]` done. Update this list every drop.
   2. *Holding is fully inert*: not hit-testable, not in the context-menu payload.
   3. *`extraData` values are drawn as passed* (no number formatting, no sign
      colouring); the `%` sign is part of the string the host sends.
-- Visual review of v1.4 in the real demo (`pnpm ... dev`): see "Verification so far" for what could not be checked in the sandbox.
+- **To confirm with the user (v1.5 interpretations):**
+  1. *`pt` vs px:* `iconSize` / `iconOffset` are CSS px (default 20), consistent with `fontSize`. If real points are meant, multiply by 4/3.
+  2. *`temporary` keeps the native axis label* (price on the axis). Set `axisLabelVisible: false` in `addLine` for it if not wanted.
+  3. *`infoBoxLineWidth` does not touch the `✕` / `✓` disks* (they stay 1px).
+  4. *`showOrderValue` is orders only* (not alerts) and the "current price" is the last bar of the series. If the host knows a better live price, add an option for it.
+  5. *Box width jitter:* the value changes the box width while dragging (proportional font, `-9,99 %` to `-10,00 %`). If it bothers, reserve a fixed width for the value.
+  6. *Drag start payload* is just `{ line }`; add `area` if the host needs to know what was grabbed.
+- Visual review of v1.5 in the real demo (`pnpm ... dev`): see "Verification so far" for what could not be checked in the sandbox.
 - Known limitation (unchanged from v1.0): pointer coordinates are relative to
   the chart container and assume the pane starts at x = 0 (no left price scale).
 - Hover-only buttons have no touch equivalent (no hover on touch); a tap on the
@@ -304,7 +397,7 @@ the user if anything should differ, there is no blue token):
 | Use | Token |
 | --- | --- |
 | chart `backgroundColor` / `layout.background` | `--bg-0` |
-| quantity / label text on controls | `fontColor` = `--text-primary` (plugin fallback chain: `fontColor` → `color` → `#fff`; icons, borders and separator use the line colour) |
+| quantity / label text on controls | `fontColor` = `--text-primary` (plugin fallback chain: `fontColor` → explicit `colorPriceLine` → `#fff`) |
 | `DEMO_COLORS.holding` | `--text-secondary` |
 | `DEMO_COLORS.alert` | `--yellow` |
 | `DEMO_COLORS.buy` | `--green` |
@@ -317,15 +410,18 @@ the user if anything should differ, there is no blue token):
 ## Demo fixtures (use in `src/example/example.ts`)
 
 ```ts
+// v1.5: STYLE = { fontColor: FONT_COLOR, fontWeightLabel: 600, fontWeightValues: 'normal' } is spread into every fixture below; the demo also sets
+// showOrderValue on the buy / stop-loss / sell-limit orders, icons ('🔔', '⛔'), priceLineWidth / infoBoxLineWidth 2 on buy-stop, a backgroundColor on sell-limit,
+// and the context menu on an empty chart can set / remove a `temporary` line.
 // FONT_COLOR = token('--text-primary'); HOLDING_EXTRA = { holdingAmount: '123', holdingAbsGain: '+123,12', holdingRelGain: '+13,12 %' }
 export const DEMO_LINES = [
-  { id: 'alert', price: 102.5, color: DEMO_COLORS.alert, fontColor: FONT_COLOR, label: 'Alert', quantity: '', actions: ['cancel'], lineType: 'alert' },
-  { id: 'buy-limit', price: 96.5, color: DEMO_COLORS.buy, fontColor: FONT_COLOR, label: 'Buy Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
-  { id: 'buy-stop', price: 105, color: DEMO_COLORS.buy, fontColor: FONT_COLOR, label: 'Buy Stop', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
-  { id: 'sell-stop-loss', price: 94, color: DEMO_COLORS.sell, fontColor: FONT_COLOR, label: 'Stop Loss', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
-  { id: 'sell-trailing-stop', price: 91.5, color: DEMO_COLORS.trailing, fontColor: FONT_COLOR, label: 'Trailing Stop', quantity: '', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
-  { id: 'sell-limit', price: 108, color: DEMO_COLORS.sellLimit, fontColor: FONT_COLOR, label: 'Sell Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
-  { id: 'holding', price: 97.8, color: DEMO_COLORS.holding, fontColor: FONT_COLOR, label: 'Owned', extraData: HOLDING_EXTRA, lineType: 'holding' },
+  { id: 'alert', price: 102.5, colorPriceLine: DEMO_COLORS.alert, fontColor: FONT_COLOR, label: 'Alert', quantity: '', actions: ['cancel'], lineType: 'alert' },
+  { id: 'buy-limit', price: 96.5, colorPriceLine: DEMO_COLORS.buy, fontColor: FONT_COLOR, label: 'Buy Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
+  { id: 'buy-stop', price: 105, colorPriceLine: DEMO_COLORS.buy, fontColor: FONT_COLOR, label: 'Buy Stop', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
+  { id: 'sell-stop-loss', price: 94, colorPriceLine: DEMO_COLORS.sell, fontColor: FONT_COLOR, label: 'Stop Loss', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
+  { id: 'sell-trailing-stop', price: 91.5, colorPriceLine: DEMO_COLORS.trailing, fontColor: FONT_COLOR, label: 'Trailing Stop', quantity: '', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
+  { id: 'sell-limit', price: 108, colorPriceLine: DEMO_COLORS.sellLimit, fontColor: FONT_COLOR, label: 'Sell Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
+  { id: 'holding', price: 97.8, colorPriceLine: DEMO_COLORS.holding, fontColor: FONT_COLOR, label: 'Owned', extraData: HOLDING_EXTRA, lineType: 'holding' },
 ];
 ```
 
@@ -354,7 +450,9 @@ the host-owned HTML editor for quantity / label edits.
   the series whose price scale the levels use.
 - `lineType` drives behaviour: `alert` → whole-line drag, centred hover icon
   box, no labels; `order` → info box + hover buttons; `holding` → static
-  multi-segment box.
+  multi-segment box; `temporary` → bare line.
+- Never keep a reference to `chart.options()` values across an `applyOptions`
+  call: it is a live object. Copy with `structuredClone` first (v1.5 bug).
 - Layout constants (base row height 22 @ 12px font, text padding 8, gaps, min
   widths, 4px threshold, ±2px band, 5rem offset) are at the top of the source
   file.

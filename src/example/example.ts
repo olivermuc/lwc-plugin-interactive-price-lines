@@ -22,14 +22,17 @@ const FONT_COLOR = token('--text-primary');
 // Host responsibility: holding values are display strings, formatted (and kept current) by the host.
 const HOLDING_EXTRA = { holdingAmount: '123', holdingAbsGain: '+123,12', holdingRelGain: '+13,12 %' };
 
+// Shared v1.5 styling: bold label, regular values (quantity, order value, holding values).
+const STYLE = { fontColor: FONT_COLOR, fontWeightLabel: 600, fontWeightValues: 'normal' } as const;
+
 export const DEMO_LINES: InteractivePriceLineOptions[] = [
-	{ id: 'alert', price: 102.5, color: DEMO_COLORS.alert, fontColor: FONT_COLOR, label: 'Alert', quantity: '', actions: ['cancel'], lineType: 'alert' },
-	{ id: 'buy-limit', price: 96.5, color: DEMO_COLORS.buy, fontColor: FONT_COLOR, label: 'Buy Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
-	{ id: 'buy-stop', price: 105, color: DEMO_COLORS.buy, fontColor: FONT_COLOR, label: 'Buy Stop', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
-	{ id: 'sell-stop-loss', price: 94, color: DEMO_COLORS.sell, fontColor: FONT_COLOR, label: 'Stop Loss', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
-	{ id: 'sell-trailing-stop', price: 91.5, color: DEMO_COLORS.trailing, fontColor: FONT_COLOR, label: 'Trailing Stop', quantity: '', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
-	{ id: 'sell-limit', price: 108, color: DEMO_COLORS.sellLimit, fontColor: FONT_COLOR, label: 'Sell Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true },
-	{ id: 'holding', price: 97.8, color: DEMO_COLORS.holding, fontColor: FONT_COLOR, label: 'Owned', extraData: HOLDING_EXTRA, lineType: 'holding' },
+	{ id: 'alert', price: 102.5, colorPriceLine: DEMO_COLORS.alert, ...STYLE, label: 'Alert', quantity: '', actions: ['cancel'], lineType: 'alert', icon: '🔔' },
+	{ id: 'buy-limit', price: 96.5, colorPriceLine: DEMO_COLORS.buy, ...STYLE, label: 'Buy Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false, showOrderValue: true },
+	{ id: 'buy-stop', price: 105, colorPriceLine: DEMO_COLORS.buy, ...STYLE, label: 'Buy Stop', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true, showOrderValue: true, priceLineWidth: 2, infoBoxLineWidth: 2 },
+	{ id: 'sell-stop-loss', price: 94, colorPriceLine: DEMO_COLORS.sell, ...STYLE, label: 'Stop Loss', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true, showOrderValue: true, icon: '⛔' },
+	{ id: 'sell-trailing-stop', price: 91.5, colorPriceLine: DEMO_COLORS.trailing, ...STYLE, label: 'Trailing Stop', quantity: '', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: false },
+	{ id: 'sell-limit', price: 108, colorPriceLine: DEMO_COLORS.sellLimit, ...STYLE, label: 'Sell Limit', quantity: '4', actions: ['cancel', 'confirm'], lineType: 'order', confirmed: true, showOrderValue: true, backgroundColor: token('--bg-2') },
+	{ id: 'holding', price: 97.8, colorPriceLine: DEMO_COLORS.holding, ...STYLE, label: 'Owned', extraData: HOLDING_EXTRA, lineType: 'holding' },
 ];
 
 const container = document.getElementById('chart') as HTMLElement;
@@ -80,12 +83,14 @@ lines.actionClicked().subscribe(({ line, action }) => {
 	// Simulated order commit; the plugin never sets `confirmed` itself.
 	else lines.updateLine(line.id, { confirmed: true });
 });
+lines.dragStarted().subscribe(({ line }) => console.log(`${line.id}: drag started at ${line.price}`));
 lines.priceChanged().subscribe(({ line, previousPrice }) => console.log(`${line.id}: ${previousPrice} → ${line.price}`));
 
 // --- Host-owned context menu ---
 const menu = document.getElementById('menu') as HTMLElement;
 const colorCycle = Object.values(DEMO_COLORS).filter(color => color !== DEMO_COLORS.holding);
 let alertCounter = 0;
+const TEMPORARY_ID = 'temporary';
 
 function closeMenu(): void { menu.style.display = 'none'; menu.replaceChildren(); }
 function menuItem(text: string, run: () => void): void {
@@ -101,11 +106,17 @@ lines.contextMenuRequested().subscribe(({ price, line, clientX, clientY }) => {
 			const next = parseFloat(value);
 			if (Number.isFinite(next)) lines.updateLine(line.id, { price: next });
 		}));
-		menuItem('Change colour', () => lines.updateLine(line.id, { color: colorCycle[(colorCycle.indexOf(line.color) + 1) % colorCycle.length] }));
+		menuItem('Change colour', () => lines.updateLine(line.id, { colorPriceLine: colorCycle[(colorCycle.indexOf(line.colorPriceLine) + 1) % colorCycle.length] }));
 		menuItem('Remove', () => lines.removeLine(line.id));
 	} else if (price !== null) {
+		// A `temporary` line is a controls-free placeholder, set and unset by the host only.
+		menuItem(`Set temporary line at ${price.toFixed(2)}`, () => {
+			if (lines.lines().some(existing => existing.id === TEMPORARY_ID)) lines.updateLine(TEMPORARY_ID, { price });
+			else lines.addLine({ id: TEMPORARY_ID, price, lineType: 'temporary', colorPriceLine: DEMO_COLORS.holding, icon: '◆', iconSize: 12, priceLineWidth: 1 });
+		});
+		if (lines.lines().some(existing => existing.id === TEMPORARY_ID)) menuItem('Remove temporary line', () => lines.removeLine(TEMPORARY_ID));
 		menuItem(`Add alert at ${price.toFixed(2)}`, () => lines.addLine({
-			id: `alert-${++alertCounter}`, price, lineType: 'alert', color: DEMO_COLORS.alert, fontColor: FONT_COLOR, label: 'Alert', actions: ['cancel'],
+			id: `alert-${++alertCounter}`, price, lineType: 'alert', colorPriceLine: DEMO_COLORS.alert, fontColor: FONT_COLOR, label: 'Alert', actions: ['cancel'],
 		}));
 	} else return;
 	menu.style.left = `${clientX}px`; menu.style.top = `${clientY}px`; menu.style.display = 'flex';
