@@ -1,0 +1,2 @@
+v1.7
+v1.7: Add Apache-2.0 licence, NOTICE, user README and author attribution; fix bold text measuring, separator width and horizontal line thickness; validate lineType and price

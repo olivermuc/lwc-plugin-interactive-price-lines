@@ -1,4 +1,11 @@
-import { ColorType, LineSeries, Time, createChart } from 'lightweight-charts';
+/**
+ * Live example of the interactive price lines plugin (also the catalog preview page).
+ *
+ * @author Oliver Seidel
+ * @copyright 2026 Oliver Seidel
+ * @license Apache-2.0
+ */
+import { ColorType, LineSeries, type UTCTimestamp, createChart } from 'lightweight-charts';
 import {
 	InteractivePriceLines,
 	type InteractivePriceLineAnchor,
@@ -22,7 +29,7 @@ const FONT_COLOR = token('--text-primary');
 // Host responsibility: holding values are display strings, formatted (and kept current) by the host.
 const HOLDING_EXTRA = { holdingAmount: '123', holdingAbsGain: '+123,12', holdingRelGain: '+13,12 %' };
 
-// Shared v1.5 styling: bold label, regular values (quantity, order value, holding values).
+// Shared styling: semi-bold label, regular values (quantity, order value, holding values).
 const STYLE = { fontColor: FONT_COLOR, fontWeightLabel: 600, fontWeightValues: 'normal' } as const;
 
 export const DEMO_LINES: InteractivePriceLineOptions[] = [
@@ -42,7 +49,7 @@ const chart = createChart(container, {
 	grid: { vertLines: { color: token('--hairline') }, horzLines: { color: token('--hairline') } },
 });
 const series = chart.addSeries(LineSeries, { color: '#2962FF' });
-series.setData(Array.from({ length: 80 }, (_, index) => ({ time: (1704067200 + index * 86400) as unknown as Time, value: 100 + Math.sin(index / 5) * 10 })));
+series.setData(Array.from({ length: 80 }, (_, index) => ({ time: (1704067200 + index * 86400) as UTCTimestamp, value: 100 + Math.sin(index / 5) * 10 })));
 chart.timeScale().fitContent();
 
 const lines = new InteractivePriceLines(container, {

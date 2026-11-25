@@ -1,2 +1,0 @@
-v1.6
-v1.6: Align icon backdrops to line edges and allow custom dash patterns

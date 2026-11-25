@@ -1,0 +1,11 @@
+Interactive price lines (lwc-plugin-interactive-price-lines)
+Copyright 2026 Oliver Seidel
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+Redistributions, in source or binary form, must retain this NOTICE together with the copyright notice.
+
+This is an independent community plugin for Lightweight Charts(TM). It is not affiliated with,
+sponsored or endorsed by TradingView, Inc. Lightweight Charts(TM) is a trademark of TradingView, Inc.
+
+The build script (compile.mjs) and the project layout are based on the create-lwc-plugin template,
+Copyright TradingView, Inc., licensed under the Apache License, Version 2.0.
